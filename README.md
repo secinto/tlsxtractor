@@ -47,6 +47,8 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+**Note**: On first run, `tldextract` will download and cache Mozilla's Public Suffix List (~200KB) for accurate domain categorization.
+
 4. Verify installation:
 ```bash
 python -m pytest tests/
@@ -181,10 +183,10 @@ Results are exported in structured JSON format with domain source attribution:
     ]
   },
   "discovered_hosts": {
-    "hostnames": ["api.example.com", "example.com", "www.example.com"],
-    "tlds": ["com"],
+    "hostnames": ["api.example.com", "www.example.com"],
+    "tlds": ["example.com"],
     "wildcards": ["*.example.com"],
-    "total_hostnames": 3,
+    "total_hostnames": 2,
     "total_tlds": 1,
     "filtered_count": 5
   }
@@ -198,6 +200,15 @@ Each result includes a `domain_sources` field showing where domains were discove
 - **san**: Subject Alternative Names from certificate
 - **cn**: Common Name from certificate subject
 - **csp**: Domains extracted from Content-Security-Policy header (when `--fetch-csp` is used)
+
+### Domain Categorization
+
+TLSXtractor intelligently categorizes discovered domains using Mozilla's Public Suffix List:
+
+- **hostnames**: Subdomains only (e.g., `api.example.com`, `www.example.co.uk`, `one.one.one.one`)
+- **tlds**: Registrable domains / eTLD+1 (e.g., `example.com`, `example.co.uk`, `test.or.at`, `one.one`)
+
+This separation makes it easy to identify unique organizations/assets by their base domains while still tracking all subdomains. The Public Suffix List ensures correct handling of complex TLDs like `co.uk`, `or.at`, and special cases like `.google`.
 
 ## Development
 

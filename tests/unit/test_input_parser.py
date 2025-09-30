@@ -169,10 +169,13 @@ def test_parse_file_auto_detect_ip(tmp_path):
     test_file = tmp_path / "test.txt"
     test_file.write_text("1.1.1.1\n8.8.8.8\n")
 
-    result = InputParser.parse_file(str(test_file))
-    assert isinstance(result, list)
-    assert len(result) == 2
-    assert "1.1.1.1" in result
+    # parse_file returns (ip_list, url_data_list) in mixed mode
+    ip_list, url_data_list = InputParser.parse_file(str(test_file))
+    assert isinstance(ip_list, list)
+    assert len(ip_list) == 2
+    assert "1.1.1.1" in ip_list
+    assert "8.8.8.8" in ip_list
+    assert len(url_data_list) == 0
 
 
 def test_parse_file_explicit_type(tmp_path):

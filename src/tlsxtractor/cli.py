@@ -374,6 +374,11 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
 
     # Scan all targets
     console.info("Scanning in progress...")
+
+    # Show initial progress bar immediately
+    if not args.quiet:
+        console.print_progress(stats, force=True)
+
     try:
         # Track progress
         async def update_progress():
@@ -590,6 +595,10 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
     unique_domains = set()
 
     console.info("Scanning in progress...")
+
+    # Show initial progress bar immediately
+    if not args.quiet:
+        console.print_progress(stats, force=True)
 
     # Use scan_multiple for concurrent scanning
     try:
@@ -822,6 +831,10 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
     unique_domains = set()
 
     console.info("TLS scanning in progress...")
+
+    # Show initial progress bar immediately
+    if not args.quiet:
+        console.print_progress(stats, force=True)
 
     # Scan all IPs
     try:

@@ -7,26 +7,16 @@ from typing import List, Dict, Any, Set, Optional
 from datetime import datetime, timezone
 from pathlib import Path
 import re
+import tldextract
 
 
 class HostnameAnalyzer:
     """
     Analyzes and extracts hostnames from scan results.
 
-    Filters out wildcards and TLDs, provides sorted unique hostname lists.
+    Separates subdomains from registrable domains (eTLD+1).
+    Uses Mozilla's Public Suffix List via tldextract.
     """
-
-    # Common TLDs (subset - extend as needed)
-    COMMON_TLDS = {
-        'com', 'org', 'net', 'edu', 'gov', 'mil', 'int',
-        'co', 'io', 'ai', 'app', 'dev', 'tech', 'info',
-        'biz', 'name', 'pro', 'aero', 'museum',
-        # Country codes
-        'us', 'uk', 'de', 'fr', 'jp', 'cn', 'au', 'ca', 'br', 'in',
-        'ru', 'it', 'es', 'nl', 'se', 'no', 'dk', 'fi', 'pl', 'ch',
-        'at', 'be', 'cz', 'gr', 'hu', 'ie', 'pt', 'ro', 'sk', 'bg',
-        'hr', 'lt', 'lv', 'ee', 'si', 'cy', 'mt', 'lu',
-    }
 
     @staticmethod
     def is_wildcard(hostname: str) -> bool:
@@ -34,25 +24,61 @@ class HostnameAnalyzer:
         return '*' in hostname
 
     @staticmethod
-    def is_tld_only(hostname: str) -> bool:
-        """Check if hostname is just a TLD (no subdomain/domain)."""
-        # Remove leading/trailing dots and whitespace
-        hostname = hostname.strip().strip('.')
+    def extract_registrable_domain(hostname: str) -> Optional[str]:
+        """
+        Extract the registrable domain (eTLD+1) from a hostname.
 
-        # If it's empty or has no dots, it's likely a TLD
-        if not hostname or '.' not in hostname:
-            # Check if it's a known TLD
-            return hostname.lower() in HostnameAnalyzer.COMMON_TLDS
+        Examples:
+            api.example.com -> example.com
+            example.com -> example.com
+            www.example.co.uk -> example.co.uk
+            test.or.at -> test.or.at
 
-        return False
+        Args:
+            hostname: The hostname to extract from
+
+        Returns:
+            The registrable domain or None if invalid
+        """
+        if not hostname:
+            return None
+
+        try:
+            ext = tldextract.extract(hostname)
+            # top_domain_under_public_suffix is the eTLD+1 (e.g., example.com, example.co.uk)
+            if ext.top_domain_under_public_suffix:
+                return ext.top_domain_under_public_suffix
+        except Exception:
+            pass
+
+        return None
 
     @staticmethod
-    def extract_tld(hostname: str) -> str:
-        """Extract TLD from hostname."""
-        parts = hostname.strip().strip('.').split('.')
-        if len(parts) > 0:
-            return parts[-1].lower()
-        return ""
+    def is_registrable_domain(hostname: str) -> bool:
+        """
+        Check if hostname is the registrable domain itself (not a subdomain).
+
+        Examples:
+            example.com -> True (is registrable domain)
+            api.example.com -> False (has subdomain)
+            example.co.uk -> True (is registrable domain)
+            www.example.co.uk -> False (has subdomain)
+
+        Args:
+            hostname: The hostname to check
+
+        Returns:
+            True if hostname equals its registrable domain
+        """
+        if not hostname:
+            return False
+
+        try:
+            ext = tldextract.extract(hostname)
+            # Check if there's no subdomain and we have a valid domain
+            return not ext.subdomain and ext.domain and ext.suffix
+        except Exception:
+            return False
 
     @staticmethod
     def is_valid_hostname(hostname: str) -> bool:
@@ -85,12 +111,12 @@ class HostnameAnalyzer:
         Returns:
             Dictionary with hostname analysis:
             {
-                "hostnames": [...],  # Sorted unique explicit hostnames
-                "tlds": [...],       # Sorted unique TLDs
-                "wildcards": [...],  # Wildcards found (informational)
-                "total_hostnames": int,
-                "total_tlds": int,
-                "filtered_count": int  # Number of filtered domains (if filter provided)
+                "hostnames": [...],       # Subdomains only (e.g., api.example.com)
+                "tlds": [...],            # Registrable domains/eTLD+1 (e.g., example.com, example.co.uk)
+                "wildcards": [...],       # Wildcards found (informational)
+                "total_hostnames": int,   # Count of subdomains
+                "total_tlds": int,        # Count of unique registrable domains
+                "filtered_count": int     # Number of filtered domains (if filter provided)
             }
         """
         all_hostnames: Set[str] = set()
@@ -151,9 +177,9 @@ class HostnameAnalyzer:
                 if result is not None and isinstance(result, dict):
                     extract_from_result(result)
 
-        # Separate wildcards and regular hostnames
-        regular_hostnames: Set[str] = set()
-        tlds: Set[str] = set()
+        # Separate wildcards, subdomains, and registrable domains
+        regular_hostnames: Set[str] = set()  # Subdomains only
+        registrable_domains: Set[str] = set()  # eTLD+1 / base domains
 
         for hostname in all_hostnames:
             hostname = hostname.strip().strip('.')  # Remove leading/trailing dots
@@ -171,26 +197,31 @@ class HostnameAnalyzer:
                 wildcards.add(hostname)
                 continue
 
-            # Check if it's just a TLD
-            if HostnameAnalyzer.is_tld_only(hostname):
-                tlds.add(hostname.lower())
+            # Validate hostname format
+            if not HostnameAnalyzer.is_valid_hostname(hostname):
                 continue
 
-            # Validate and add
-            if HostnameAnalyzer.is_valid_hostname(hostname):
-                regular_hostnames.add(hostname.lower())
+            hostname_lower = hostname.lower()
 
-                # Also extract and track the TLD
-                tld = HostnameAnalyzer.extract_tld(hostname)
-                if tld and tld != hostname.lower():  # Don't add if hostname is same as TLD
-                    tlds.add(tld)
+            # Check if this is a registrable domain (eTLD+1) or a subdomain
+            if HostnameAnalyzer.is_registrable_domain(hostname_lower):
+                # This IS the base domain (e.g., example.com, example.co.uk)
+                registrable_domains.add(hostname_lower)
+            else:
+                # This is a subdomain (e.g., api.example.com, www.example.co.uk)
+                regular_hostnames.add(hostname_lower)
+
+                # Also track its registrable domain
+                registrable = HostnameAnalyzer.extract_registrable_domain(hostname_lower)
+                if registrable:
+                    registrable_domains.add(registrable)
 
         result = {
             "hostnames": sorted(list(regular_hostnames)),
-            "tlds": sorted(list(tlds)),
+            "tlds": sorted(list(registrable_domains)),
             "wildcards": sorted(list(wildcards)),
             "total_hostnames": len(regular_hostnames),
-            "total_tlds": len(tlds),
+            "total_tlds": len(registrable_domains),
         }
 
         # Add filtered count if filtering was applied
