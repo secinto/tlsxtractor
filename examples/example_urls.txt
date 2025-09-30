@@ -1,0 +1,7 @@
+# Example URL list file
+# One URL per line
+
+https://example.com
+https://www.google.com
+https://cloudflare.com
+github.com

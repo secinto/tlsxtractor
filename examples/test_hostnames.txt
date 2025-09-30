@@ -1,0 +1,3 @@
+# Test hostnames
+cloudflare.com
+github.com

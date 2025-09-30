@@ -1,0 +1,169 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "scan_timestamp": "2025-09-30T07:04:35.179332Z",
+    "mode": "ip_scan",
+    "parameters": {
+      "input": "examples/example_ips.txt",
+      "port": 443,
+      "timeout": 10,
+      "threads": 3,
+      "retry": 3
+    },
+    "statistics": {
+      "total_targets": 4,
+      "scanned": 4,
+      "successful": 3,
+      "failed": 1,
+      "unique_domains": 24,
+      "elapsed_seconds": 47.05521607398987,
+      "scan_rate": 0.08500651646589782
+    }
+  },
+  "results": [
+    {
+      "ip": "8.8.8.8",
+      "port": 443,
+      "status": "success",
+      "sni": null,
+      "domains": [
+        "dns.google",
+        "dns.google.com",
+        "*.dns.google.com",
+        "8888.google",
+        "dns64.dns.google"
+      ],
+      "tls_version": "TLSv1.3",
+      "error": null,
+      "certificate": {
+        "subject": {
+          "commonName": "dns.google"
+        },
+        "san": [
+          "dns.google",
+          "dns.google.com",
+          "*.dns.google.com",
+          "8888.google",
+          "dns64.dns.google"
+        ],
+        "issuer": {
+          "countryName": "US",
+          "organizationName": "Google Trust Services",
+          "commonName": "WR2"
+        },
+        "validity": {
+          "not_before": "2025-09-08T08:37:57",
+          "not_after": "2025-12-01T08:37:56"
+        }
+      }
+    },
+    {
+      "ip": "1.1.1.1",
+      "port": 443,
+      "status": "success",
+      "sni": null,
+      "domains": [
+        "cloudflare-dns.com",
+        "*.cloudflare-dns.com",
+        "one.one.one.one"
+      ],
+      "tls_version": "TLSv1.3",
+      "error": null,
+      "certificate": {
+        "subject": {
+          "countryName": "US",
+          "stateOrProvinceName": "California",
+          "localityName": "San Francisco",
+          "organizationName": "Cloudflare, Inc.",
+          "commonName": "cloudflare-dns.com"
+        },
+        "san": [
+          "cloudflare-dns.com",
+          "*.cloudflare-dns.com",
+          "one.one.one.one"
+        ],
+        "issuer": {
+          "countryName": "US",
+          "organizationName": "DigiCert Inc",
+          "commonName": "DigiCert Global G2 TLS RSA SHA256 2020 CA1"
+        },
+        "validity": {
+          "not_before": "2025-01-02T00:00:00",
+          "not_after": "2026-01-21T23:59:59"
+        }
+      }
+    },
+    {
+      "ip": "9.9.9.9",
+      "port": 443,
+      "status": "success",
+      "sni": null,
+      "domains": [
+        "dns.quad9.net",
+        "dns-nosec.quad9.net",
+        "doh-brave.quad9.net",
+        "dns.resolver.quad9.net",
+        "alpha-dns.quad9.net",
+        "beta-dns.quad9.net",
+        "dns9.quad9.net",
+        "dns10.quad9.net",
+        "dns11.quad9.net",
+        "dns12.quad9.net",
+        "dns13.quad9.net",
+        "dns14.quad9.net",
+        "dns15.quad9.net",
+        "dns254.quad9.net",
+        "doh-chrome.quad9.net",
+        "doh-mozilla.quad9.net"
+      ],
+      "tls_version": "TLSv1.3",
+      "error": null,
+      "certificate": {
+        "subject": {
+          "countryName": "CH",
+          "stateOrProvinceName": "Zurich",
+          "localityName": "Zurich",
+          "organizationName": "Quad9",
+          "commonName": "dns.quad9.net"
+        },
+        "san": [
+          "dns.quad9.net",
+          "dns-nosec.quad9.net",
+          "doh-brave.quad9.net",
+          "dns.resolver.quad9.net",
+          "alpha-dns.quad9.net",
+          "beta-dns.quad9.net",
+          "dns9.quad9.net",
+          "dns10.quad9.net",
+          "dns11.quad9.net",
+          "dns12.quad9.net",
+          "dns13.quad9.net",
+          "dns14.quad9.net",
+          "dns15.quad9.net",
+          "dns254.quad9.net",
+          "doh-chrome.quad9.net",
+          "doh-mozilla.quad9.net"
+        ],
+        "issuer": {
+          "countryName": "US",
+          "organizationName": "DigiCert Inc",
+          "commonName": "DigiCert Global G3 TLS ECC SHA384 2020 CA1"
+        },
+        "validity": {
+          "not_before": "2025-07-01T00:00:00",
+          "not_after": "2026-07-27T23:59:59"
+        }
+      }
+    },
+    {
+      "ip": "2606:4700:4700::1111",
+      "port": 443,
+      "status": "timeout",
+      "sni": null,
+      "domains": [],
+      "tls_version": null,
+      "error": "Connection timeout",
+      "certificate": null
+    }
+  ]
+}

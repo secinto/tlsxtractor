@@ -1,0 +1,3 @@
+# Test URLs
+cloudflare.com
+google.com
