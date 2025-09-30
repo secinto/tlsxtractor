@@ -116,6 +116,23 @@ Examples:
         help="Suppress progress output",
     )
 
+    # Domain extraction and filtering options
+    parser.add_argument(
+        "--fetch-csp",
+        action="store_true",
+        help="Fetch and parse Content-Security-Policy headers for additional domains",
+    )
+    parser.add_argument(
+        "--exclude-domains",
+        metavar="FILE_OR_CSV",
+        help="Exclude domains from results (file path or comma-separated list)",
+    )
+    parser.add_argument(
+        "--no-default-exclusions",
+        action="store_true",
+        help="Disable default domain exclusion list (CDNs, analytics, etc.)",
+    )
+
     return parser
 
 
@@ -195,6 +212,40 @@ def main() -> int:
         return 1
 
 
+def create_domain_filter(args: argparse.Namespace) -> Optional["DomainFilter"]:
+    """
+    Create domain filter from CLI arguments.
+
+    Args:
+        args: Parsed CLI arguments
+
+    Returns:
+        DomainFilter instance or None if no filtering requested
+    """
+    if not args.exclude_domains and args.no_default_exclusions:
+        # No filtering at all
+        return None
+
+    from .domain_filter import DomainFilter
+    from pathlib import Path
+
+    # Determine if we use defaults
+    use_defaults = not args.no_default_exclusions
+
+    # Check if exclude_domains is a file or CSV
+    if args.exclude_domains:
+        exclude_path = Path(args.exclude_domains)
+        if exclude_path.exists():
+            # It's a file
+            return DomainFilter.from_file(exclude_path, use_defaults=use_defaults)
+        else:
+            # Treat as comma-separated list
+            return DomainFilter.from_comma_separated(args.exclude_domains, use_defaults=use_defaults)
+    else:
+        # Just use defaults
+        return DomainFilter(use_defaults=use_defaults)
+
+
 async def run_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int:
     """
     Execute the scanning operation.
@@ -261,6 +312,7 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
         timeout=args.timeout,
         retry_count=args.retry,
         port=args.port,
+        fetch_csp=args.fetch_csp,
     )
     dns_resolver = DNSResolver(timeout=args.timeout)
 
@@ -346,6 +398,10 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                     stats.domains_found = len(unique_domains)
                     console.print_domain_found(result.ip, result.port, result.domains)
 
+                # Print CSP domains separately if found
+                if result.domain_sources.get("csp"):
+                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"])
+
                 # Map back to URLs if applicable
                 if result.sni:  # This was a URL/hostname target
                     for url, data in url_results_map.items():
@@ -383,7 +439,8 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
 
     # Export results in mixed mode format
     try:
-        output_formatter = OutputFormatter(args.output, mode="mixed_scan")
+        domain_filter = create_domain_filter(args)
+        output_formatter = OutputFormatter(args.output, mode="mixed_scan", domain_filter=domain_filter)
 
         # Separate IP results and URL results
         ip_results = [r for r in results if r.sni is None]
@@ -403,6 +460,7 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                         "status": r.status,
                         "sni": r.sni,
                         "domains": r.domains,
+                        "domain_sources": r.domain_sources,
                         "tls_version": r.tls_version,
                         "error": r.error,
                         "certificate": r.certificate,
@@ -421,6 +479,7 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                         "status": r.status,
                         "sni": r.sni,
                         "domains": r.domains,
+                        "domain_sources": r.domain_sources,
                         "tls_version": r.tls_version,
                         "error": r.error,
                         "certificate": r.certificate,
@@ -517,6 +576,7 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
         timeout=args.timeout,
         retry_count=args.retry,
         port=args.port,
+        fetch_csp=args.fetch_csp,
     )
 
     # Initialize statistics
@@ -557,6 +617,10 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
                         unique_domains.add(domain)
                     stats.domains_found = len(unique_domains)
                     console.print_domain_found(result.ip, result.port, result.domains)
+
+                # Print CSP domains separately if found
+                if result.domain_sources.get("csp"):
+                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"])
             else:
                 stats.failed += 1
                 logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
@@ -589,7 +653,8 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
 
     # Export results
     try:
-        output_formatter = OutputFormatter(args.output, mode="ip_scan")
+        domain_filter = create_domain_filter(args)
+        output_formatter = OutputFormatter(args.output, mode="ip_scan", domain_filter=domain_filter)
 
         # Prepare output data
         output_data = output_formatter.create_output(
@@ -600,6 +665,7 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
                     "status": r.status,
                     "sni": r.sni,
                     "domains": r.domains,
+                    "domain_sources": r.domain_sources,
                     "tls_version": r.tls_version,
                     "error": r.error,
                     "certificate": r.certificate,
@@ -748,6 +814,7 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
         timeout=args.timeout,
         retry_count=args.retry,
         port=args.port,
+        fetch_csp=args.fetch_csp,
     )
 
     # Initialize statistics
@@ -797,6 +864,10 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
                     for domain in result.domains:
                         unique_domains.add(domain)
                     console.print_domain_found(result.ip, result.port, result.domains)
+
+                # Print CSP domains separately if found
+                if result.domain_sources.get("csp"):
+                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"])
             else:
                 stats.failed += 1
                 logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
@@ -821,7 +892,8 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
 
     # Export results in URL scan format
     try:
-        output_formatter = OutputFormatter(args.output, mode="url_scan")
+        domain_filter = create_domain_filter(args)
+        output_formatter = OutputFormatter(args.output, mode="url_scan", domain_filter=domain_filter)
 
         # Build results in URL scan format
         results_list = []
@@ -839,6 +911,7 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
                         "status": r.status,
                         "sni": r.sni,
                         "domains": r.domains,
+                        "domain_sources": r.domain_sources,
                         "tls_version": r.tls_version,
                         "error": r.error,
                         "certificate": r.certificate,

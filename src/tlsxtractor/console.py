@@ -159,6 +159,33 @@ class ConsoleOutput:
             if self._progress_line_active and self._last_progress_line:
                 print(f"\r{self._last_progress_line}", end="", flush=True)
 
+    def print_csp_domains(self, ip: str, port: int, csp_domains: list) -> None:
+        """
+        Print CSP domains discovered.
+
+        Args:
+            ip: Source IP address
+            port: Source port
+            csp_domains: List of domains from CSP header
+        """
+        if self.quiet or not csp_domains:
+            return
+
+        with self._lock:
+            # Clear progress line if active
+            if self._progress_line_active:
+                print(f"\r{' ' * 120}\r", end="")
+
+            domain_list = ", ".join(csp_domains[:10])  # Limit to first 10 for display
+            count_msg = f" (+{len(csp_domains) - 10} more)" if len(csp_domains) > 10 else ""
+            message = f"[{ip}:{port}] CSP domains: {domain_list}{count_msg}"
+            colored = self._colorize(message, "35")  # Magenta
+            print(colored)
+
+            # Reprint progress line
+            if self._progress_line_active and self._last_progress_line:
+                print(f"\r{self._last_progress_line}", end="", flush=True)
+
     def print_progress(self, stats: ScanStatistics, force: bool = False) -> None:
         """
         Print scan progress.
