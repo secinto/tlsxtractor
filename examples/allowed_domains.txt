@@ -1,0 +1,16 @@
+# Example allowed domains file for --include-domains
+# Only domains matching these patterns will be included in results
+# All other domains will be filtered out
+
+# Exact domain matches
+smaxtec.com
+example.com
+
+# Wildcard patterns - include all subdomains
+*.smaxtec.com
+*.example.com
+
+# You can also use wildcards in different positions
+*.company.internal
+
+# Comments and blank lines are ignored

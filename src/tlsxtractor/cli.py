@@ -122,11 +122,20 @@ Examples:
         action="store_true",
         help="Fetch and parse Content-Security-Policy headers for additional domains",
     )
-    parser.add_argument(
+
+    # Domain filtering group (mutually exclusive)
+    filter_group = parser.add_mutually_exclusive_group()
+    filter_group.add_argument(
         "--exclude-domains",
         metavar="FILE_OR_CSV",
         help="Exclude domains from results (file path or comma-separated list)",
     )
+    filter_group.add_argument(
+        "--include-domains",
+        metavar="FILE_OR_CSV",
+        help="Only include specified domains in results (file path or comma-separated list)",
+    )
+
     parser.add_argument(
         "--no-default-exclusions",
         action="store_true",
@@ -222,18 +231,24 @@ def create_domain_filter(args: argparse.Namespace) -> Optional["DomainFilter"]:
     Returns:
         DomainFilter instance or None if no filtering requested
     """
-    if not args.exclude_domains and args.no_default_exclusions:
-        # No filtering at all
-        return None
-
     from .domain_filter import DomainFilter
     from pathlib import Path
 
-    # Determine if we use defaults
-    use_defaults = not args.no_default_exclusions
+    # Handle include-domains (allowlist mode)
+    if hasattr(args, 'include_domains') and args.include_domains:
+        include_path = Path(args.include_domains)
+        if include_path.exists():
+            # It's a file
+            return DomainFilter.from_file_include(include_path)
+        else:
+            # Treat as comma-separated list
+            return DomainFilter.from_comma_separated_include(args.include_domains)
 
-    # Check if exclude_domains is a file or CSV
+    # Handle exclude-domains (blocklist mode)
     if args.exclude_domains:
+        # Determine if we use defaults
+        use_defaults = not args.no_default_exclusions
+
         exclude_path = Path(args.exclude_domains)
         if exclude_path.exists():
             # It's a file
@@ -241,9 +256,14 @@ def create_domain_filter(args: argparse.Namespace) -> Optional["DomainFilter"]:
         else:
             # Treat as comma-separated list
             return DomainFilter.from_comma_separated(args.exclude_domains, use_defaults=use_defaults)
+
+    # No explicit filtering specified
+    if args.no_default_exclusions:
+        # No filtering at all
+        return None
     else:
         # Just use defaults
-        return DomainFilter(use_defaults=use_defaults)
+        return DomainFilter(use_defaults=True)
 
 
 async def run_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int:

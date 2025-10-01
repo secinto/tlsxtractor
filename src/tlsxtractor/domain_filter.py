@@ -108,31 +108,48 @@ class DomainFilter:
         self,
         use_defaults: bool = True,
         custom_exclusions: Optional[List[str]] = None,
-        enable_regex: bool = False
+        enable_regex: bool = False,
+        mode: str = "exclude",
+        custom_inclusions: Optional[List[str]] = None,
     ):
         """
         Initialize domain filter.
 
         Args:
-            use_defaults: Include default exclusion list
+            use_defaults: Include default exclusion list (only for exclude mode)
             custom_exclusions: Additional domains/patterns to exclude
             enable_regex: Enable regex pattern matching
+            mode: Filter mode - "exclude" or "include"
+            custom_inclusions: Domains/patterns to include (only for include mode)
         """
         self.enable_regex = enable_regex
+        self.mode = mode
         self._filtered_count = 0
 
-        # Separate storage for different pattern types
+        # Separate storage for exclusion patterns
         self._exact_matches: Set[str] = set()
         self._wildcard_patterns: List[str] = []
         self._regex_patterns: List[re.Pattern] = []
 
-        # Add default exclusions
-        if use_defaults:
-            self._add_patterns(list(self.DEFAULT_EXCLUSIONS))
+        # Separate storage for inclusion patterns
+        self._include_exact_matches: Set[str] = set()
+        self._include_wildcard_patterns: List[str] = []
+        self._include_regex_patterns: List[re.Pattern] = []
 
-        # Add custom exclusions
-        if custom_exclusions:
-            self._add_patterns(custom_exclusions)
+        if mode == "exclude":
+            # Add default exclusions
+            if use_defaults:
+                self._add_patterns(list(self.DEFAULT_EXCLUSIONS))
+
+            # Add custom exclusions
+            if custom_exclusions:
+                self._add_patterns(custom_exclusions)
+        elif mode == "include":
+            # Add custom inclusions
+            if custom_inclusions:
+                self._add_inclusion_patterns(custom_inclusions)
+        else:
+            raise ValueError(f"Invalid mode: {mode}. Must be 'exclude' or 'include'")
 
     def _add_patterns(self, patterns: List[str]) -> None:
         """
@@ -163,6 +180,35 @@ class DomainFilter:
                 self._exact_matches.add(pattern.lower())
                 logger.debug(f"Added exact match: {pattern}")
 
+    def _add_inclusion_patterns(self, patterns: List[str]) -> None:
+        """
+        Add inclusion patterns to the filter.
+
+        Args:
+            patterns: List of domain patterns (exact, wildcard, or regex)
+        """
+        for pattern in patterns:
+            pattern = pattern.strip()
+            if not pattern or pattern.startswith("#"):
+                continue
+
+            # Check if it's a regex pattern (starts with ^ or ends with $)
+            if self.enable_regex and (pattern.startswith("^") or pattern.endswith("$")):
+                try:
+                    compiled = re.compile(pattern, re.IGNORECASE)
+                    self._include_regex_patterns.append(compiled)
+                    logger.debug(f"Added include regex pattern: {pattern}")
+                except re.error as e:
+                    logger.warning(f"Invalid regex pattern '{pattern}': {e}")
+            # Check if it's a wildcard pattern
+            elif "*" in pattern:
+                self._include_wildcard_patterns.append(pattern.lower())
+                logger.debug(f"Added include wildcard pattern: {pattern}")
+            # Exact match
+            else:
+                self._include_exact_matches.add(pattern.lower())
+                logger.debug(f"Added include exact match: {pattern}")
+
     def add_exclusions(self, exclusions: Union[str, List[str]]) -> None:
         """
         Add additional exclusion patterns.
@@ -173,6 +219,17 @@ class DomainFilter:
         if isinstance(exclusions, str):
             exclusions = [exclusions]
         self._add_patterns(exclusions)
+
+    def add_inclusions(self, inclusions: Union[str, List[str]]) -> None:
+        """
+        Add additional inclusion patterns.
+
+        Args:
+            inclusions: Single pattern or list of patterns
+        """
+        if isinstance(inclusions, str):
+            inclusions = [inclusions]
+        self._add_inclusion_patterns(inclusions)
 
     def add_exclusions_from_file(self, file_path: Union[str, Path]) -> None:
         """
@@ -192,6 +249,26 @@ class DomainFilter:
             logger.info(f"Loaded {len(patterns)} exclusion patterns from {file_path}")
         except Exception as e:
             logger.error(f"Error loading exclusions from {file_path}: {e}")
+            raise
+
+    def add_inclusions_from_file(self, file_path: Union[str, Path]) -> None:
+        """
+        Load inclusion patterns from a file.
+
+        Args:
+            file_path: Path to file with one pattern per line
+        """
+        path = Path(file_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Inclusion file not found: {file_path}")
+
+        try:
+            with open(path, "r") as f:
+                patterns = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+            self._add_inclusion_patterns(patterns)
+            logger.info(f"Loaded {len(patterns)} inclusion patterns from {file_path}")
+        except Exception as e:
+            logger.error(f"Error loading inclusions from {file_path}: {e}")
             raise
 
     def _match_wildcard(self, domain: str, pattern: str) -> bool:
@@ -225,6 +302,9 @@ class DomainFilter:
         """
         Check if a domain should be filtered out.
 
+        In exclude mode: Returns True if domain matches any exclusion pattern
+        In include mode: Returns True if domain does NOT match any inclusion pattern
+
         Args:
             domain: Domain name to check
 
@@ -236,26 +316,55 @@ class DomainFilter:
 
         domain_lower = domain.strip().lower()
 
-        # Check exact matches first (fastest)
-        if domain_lower in self._exact_matches:
-            self._filtered_count += 1
-            logger.debug(f"Filtered (exact match): {domain}")
-            return True
-
-        # Check wildcard patterns
-        for pattern in self._wildcard_patterns:
-            if self._match_wildcard(domain_lower, pattern):
+        if self.mode == "exclude":
+            # Exclude mode: filter if domain matches any exclusion pattern
+            # Check exact matches first (fastest)
+            if domain_lower in self._exact_matches:
                 self._filtered_count += 1
-                logger.debug(f"Filtered (wildcard '{pattern}'): {domain}")
+                logger.debug(f"Filtered (exact match): {domain}")
                 return True
 
-        # Check regex patterns (if enabled)
-        if self.enable_regex:
-            for regex in self._regex_patterns:
-                if regex.search(domain):
+            # Check wildcard patterns
+            for pattern in self._wildcard_patterns:
+                if self._match_wildcard(domain_lower, pattern):
                     self._filtered_count += 1
-                    logger.debug(f"Filtered (regex): {domain}")
+                    logger.debug(f"Filtered (wildcard '{pattern}'): {domain}")
                     return True
+
+            # Check regex patterns (if enabled)
+            if self.enable_regex:
+                for regex in self._regex_patterns:
+                    if regex.search(domain):
+                        self._filtered_count += 1
+                        logger.debug(f"Filtered (regex): {domain}")
+                        return True
+
+            return False
+
+        elif self.mode == "include":
+            # Include mode: filter if domain does NOT match any inclusion pattern
+            # Check exact matches first (fastest)
+            if domain_lower in self._include_exact_matches:
+                logger.debug(f"Kept (exact match): {domain}")
+                return False
+
+            # Check wildcard patterns
+            for pattern in self._include_wildcard_patterns:
+                if self._match_wildcard(domain_lower, pattern):
+                    logger.debug(f"Kept (wildcard '{pattern}'): {domain}")
+                    return False
+
+            # Check regex patterns (if enabled)
+            if self.enable_regex:
+                for regex in self._include_regex_patterns:
+                    if regex.search(domain):
+                        logger.debug(f"Kept (regex): {domain}")
+                        return False
+
+            # No match found - filter it out
+            self._filtered_count += 1
+            logger.debug(f"Filtered (no include match): {domain}")
+            return True
 
         return False
 
@@ -286,18 +395,29 @@ class DomainFilter:
 
     def get_exclusion_stats(self) -> dict:
         """
-        Get statistics about loaded exclusion patterns.
+        Get statistics about loaded patterns (exclusion or inclusion).
 
         Returns:
             Dictionary with pattern counts
         """
-        return {
-            "exact_matches": len(self._exact_matches),
-            "wildcard_patterns": len(self._wildcard_patterns),
-            "regex_patterns": len(self._regex_patterns),
-            "total_patterns": len(self._exact_matches) + len(self._wildcard_patterns) + len(self._regex_patterns),
-            "filtered_count": self._filtered_count,
-        }
+        if self.mode == "exclude":
+            return {
+                "mode": "exclude",
+                "exact_matches": len(self._exact_matches),
+                "wildcard_patterns": len(self._wildcard_patterns),
+                "regex_patterns": len(self._regex_patterns),
+                "total_patterns": len(self._exact_matches) + len(self._wildcard_patterns) + len(self._regex_patterns),
+                "filtered_count": self._filtered_count,
+            }
+        else:  # include mode
+            return {
+                "mode": "include",
+                "exact_matches": len(self._include_exact_matches),
+                "wildcard_patterns": len(self._include_wildcard_patterns),
+                "regex_patterns": len(self._include_regex_patterns),
+                "total_patterns": len(self._include_exact_matches) + len(self._include_wildcard_patterns) + len(self._include_regex_patterns),
+                "filtered_count": self._filtered_count,
+            }
 
     @classmethod
     def from_file(cls, file_path: Union[str, Path], use_defaults: bool = True) -> "DomainFilter":
@@ -329,3 +449,32 @@ class DomainFilter:
         """
         patterns = [p.strip() for p in patterns_str.split(",") if p.strip()]
         return cls(use_defaults=use_defaults, custom_exclusions=patterns)
+
+    @classmethod
+    def from_file_include(cls, file_path: Union[str, Path]) -> "DomainFilter":
+        """
+        Create a DomainFilter in include mode from a file.
+
+        Args:
+            file_path: Path to inclusion file
+
+        Returns:
+            Configured DomainFilter instance in include mode
+        """
+        filter_instance = cls(mode="include", use_defaults=False)
+        filter_instance.add_inclusions_from_file(file_path)
+        return filter_instance
+
+    @classmethod
+    def from_comma_separated_include(cls, patterns_str: str) -> "DomainFilter":
+        """
+        Create a DomainFilter in include mode from comma-separated patterns.
+
+        Args:
+            patterns_str: Comma-separated list of patterns
+
+        Returns:
+            Configured DomainFilter instance in include mode
+        """
+        patterns = [p.strip() for p in patterns_str.split(",") if p.strip()]
+        return cls(mode="include", use_defaults=False, custom_inclusions=patterns)
