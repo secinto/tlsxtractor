@@ -1,0 +1,64 @@
+# Pre-commit hooks for code quality
+# Install with: pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+
+  # Python formatting
+  - repo: https://github.com/psf/black
+    rev: 25.11.0
+    hooks:
+      - id: black
+        language_version: python3.11
+
+  # Import sorting
+  - repo: https://github.com/PyCQA/isort
+    rev: 7.0.0
+    hooks:
+      - id: isort
+
+  # Linting with ruff (faster alternative to flake8/pylint)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
+  # Type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.18.2
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-all]
+        args: [--config-file=pyproject.toml]
+
+  # Security checks
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.0
+    hooks:
+      - id: bandit
+        args: [-c, pyproject.toml]
+        additional_dependencies: ["bandit[toml]"]
+
+  # Documentation checks
+  - repo: https://github.com/pycqa/pydocstyle
+    rev: 6.3.0
+    hooks:
+      - id: pydocstyle
+        args: [--convention=google]
+        exclude: ^tests/
