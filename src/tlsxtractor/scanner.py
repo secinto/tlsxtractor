@@ -5,12 +5,18 @@ TLS connection and scanning functionality.
 import asyncio
 import ssl
 import socket
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable, Awaitable
 from dataclasses import dataclass, field
 import logging
 
 
 logger = logging.getLogger(__name__)
+
+# Constants
+BACKOFF_BASE = 2  # Base for exponential backoff calculation
+DEFAULT_TIMEOUT = 5  # Default connection timeout in seconds
+DEFAULT_RETRY_COUNT = 3  # Default number of retry attempts
+DEFAULT_PORT = 443  # Default HTTPS port
 
 
 @dataclass
@@ -44,9 +50,9 @@ class TLSScanner:
 
     def __init__(
         self,
-        timeout: int = 5,
-        retry_count: int = 3,
-        port: int = 443,
+        timeout: int = DEFAULT_TIMEOUT,
+        retry_count: int = DEFAULT_RETRY_COUNT,
+        port: int = DEFAULT_PORT,
         fetch_csp: bool = False,
     ):
         """
@@ -146,7 +152,7 @@ class TLSScanner:
 
             # Exponential backoff between retries
             if attempt < self.retry_count:
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(BACKOFF_BASE ** attempt)
 
         # Should not reach here, but return error if it does
         return ScanResult(
@@ -291,7 +297,7 @@ class TLSScanner:
             try:
                 writer.close()
                 await writer.wait_closed()
-            except:
+            except Exception:
                 pass
             raise
 
@@ -300,7 +306,7 @@ class TLSScanner:
         targets: List[tuple[str, Optional[int], Optional[str]]],
         concurrency: int = 10,
         rate_limit: Optional[float] = None,
-        progress_callback: Optional[callable] = None,
+        progress_callback: Optional[Callable[[ScanResult], Awaitable[None]]] = None,
     ) -> List[ScanResult]:
         """
         Scan multiple targets concurrently with optional rate limiting.

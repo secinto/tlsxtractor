@@ -3,9 +3,13 @@ Input file parsing and IP range expansion.
 """
 
 import ipaddress
+import logging
 from typing import List, Iterator, Optional, Literal
 from pathlib import Path
 from urllib.parse import urlparse
+
+
+logger = logging.getLogger(__name__)
 
 
 class InputParser:
@@ -48,7 +52,7 @@ class InputParser:
                     ipaddress.ip_address(line)
                     ips.append(line)
                 except ValueError:
-                    print(f"Warning: Invalid IP at line {line_num}: {line}")
+                    logger.warning(f"Invalid IP at line {line_num}: {line}")
 
         return ips
 
