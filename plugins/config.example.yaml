@@ -1,0 +1,226 @@
+# TLSXtractor Plugin Configuration Example
+#
+# This file demonstrates how to configure the plugin system.
+# Copy this file to your working directory and customize as needed.
+#
+# Usage:
+#   python -c "import yaml; config = yaml.safe_load(open('config.yaml'))"
+
+# Global plugin settings
+global:
+  # Plugin discovery paths (additional directories to search for plugins)
+  plugin_paths:
+    - "./custom_plugins"
+    - "/opt/tlsxtractor/plugins"
+
+  # Plugin execution settings
+  execution:
+    timeout: 300              # Global timeout for all plugins (seconds)
+    max_concurrent: 5         # Max plugins to run concurrently
+    continue_on_error: true   # Continue if a plugin fails
+
+# Individual plugin configurations
+plugins:
+  # JavaScript Domain Extractor
+  js_extractor:
+    enabled: true
+    config:
+      max_file_size: 5242880      # 5MB max per JS file
+      timeout: 30                 # HTTP request timeout (seconds)
+      max_js_files: 10            # Max external JS files to fetch
+      follow_external: true       # Fetch external JavaScript files
+      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+  # HTTP Headers Extractor
+  http_headers:
+    enabled: true
+    config:
+      timeout: 10                 # HTTP request timeout (seconds)
+      follow_redirects: true      # Follow redirect chains
+      max_redirects: 3            # Maximum redirects to follow
+      custom_headers:             # Custom HTTP headers to send
+        Accept: "text/html,application/xhtml+xml"
+        Accept-Language: "en-US,en;q=0.9"
+
+  # Subdomain Enumeration
+  subdomain_enum:
+    enabled: true
+    config:
+      timeout: 3                  # DNS query timeout (seconds)
+      max_concurrent: 50          # Max concurrent DNS queries
+      custom_wordlist: null       # Path to custom wordlist (null = use default)
+      use_default_wordlist: true  # Use built-in 100+ subdomain wordlist
+      recursive: false            # Recursively enumerate discovered subdomains
+      recursive_depth: 1          # Max recursion depth (if recursive=true)
+
+  # Certificate Transparency Logs
+  ct_logs:
+    enabled: true
+    config:
+      timeout: 30                 # HTTP request timeout (seconds)
+      max_results: 1000           # Max certificates to process
+      include_expired: true       # Include expired certificates
+      include_wildcards: true     # Include wildcard domains (*.example.com)
+      api_endpoint: "crtsh"       # CT log API to use (currently only "crtsh")
+      user_agent: "TLSXtractor CT Plugin/1.0"
+
+  # DNS Records Extractor
+  dns_records:
+    enabled: true
+    config:
+      timeout: 5                  # DNS query timeout (seconds)
+      query_mx: true              # Query MX (mail) records
+      query_ns: true              # Query NS (nameserver) records
+      query_cname: true           # Query CNAME (alias) records
+      query_txt: true             # Query TXT records
+      query_srv: true             # Query SRV (service) records
+      parse_txt_records: true     # Extract domains from TXT record content
+
+# Filter plugins (optional)
+filters:
+  # Example: Private IP filter
+  private_ip_filter:
+    enabled: false
+    config:
+      allow_private: false
+      allow_localhost: false
+
+# Enrichment plugins (optional)
+enrichments:
+  # Example: Geolocation enrichment
+  geolocation:
+    enabled: false
+    config:
+      api_key: "your-api-key-here"
+      provider: "ipapi"
+
+# Output configuration
+output:
+  # Include plugin metadata in results
+  include_metadata: true
+
+  # Include confidence scores
+  include_confidence: true
+
+  # Minimum confidence threshold (0.0 - 1.0)
+  min_confidence: 0.5
+
+  # Deduplicate results across plugins
+  deduplicate: true
+
+# Performance tuning
+performance:
+  # DNS cache settings (for subdomain_enum and dns_records plugins)
+  dns_cache:
+    enabled: true
+    maxsize: 10000              # Max cached entries
+    ttl: 3600                   # Cache TTL in seconds
+
+  # HTTP connection pooling (for js_extractor, http_headers, ct_logs)
+  http_pool:
+    enabled: true
+    max_connections: 100
+    max_per_host: 10
+
+# Logging configuration
+logging:
+  # Log level for plugins (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  level: INFO
+
+  # Log plugin execution times
+  log_timing: true
+
+  # Log plugin metadata
+  log_metadata: false
+
+# Advanced: Plugin-specific scenarios
+
+# Scenario 1: Fast scan (minimal plugins, low timeouts)
+# Uncomment to use:
+# plugins:
+#   js_extractor:
+#     enabled: false
+#   http_headers:
+#     enabled: true
+#     config:
+#       timeout: 5
+#   subdomain_enum:
+#     enabled: true
+#     config:
+#       timeout: 2
+#       max_concurrent: 100
+#       recursive: false
+#   ct_logs:
+#     enabled: false
+#   dns_records:
+#     enabled: true
+#     config:
+#       timeout: 2
+
+# Scenario 2: Deep scan (all plugins, high timeouts, recursive)
+# Uncomment to use:
+# plugins:
+#   js_extractor:
+#     enabled: true
+#     config:
+#       timeout: 60
+#       max_js_files: 20
+#   http_headers:
+#     enabled: true
+#     config:
+#       timeout: 30
+#       max_redirects: 10
+#   subdomain_enum:
+#     enabled: true
+#     config:
+#       timeout: 5
+#       max_concurrent: 200
+#       recursive: true
+#       recursive_depth: 3
+#       custom_wordlist: "/path/to/large-wordlist.txt"
+#   ct_logs:
+#     enabled: true
+#     config:
+#       timeout: 60
+#       max_results: 5000
+#   dns_records:
+#     enabled: true
+#     config:
+#       timeout: 10
+
+# Scenario 3: Certificate-focused scan
+# Uncomment to use:
+# plugins:
+#   js_extractor:
+#     enabled: false
+#   http_headers:
+#     enabled: false
+#   subdomain_enum:
+#     enabled: true
+#     config:
+#       recursive: false
+#   ct_logs:
+#     enabled: true
+#     config:
+#       max_results: 10000
+#       include_expired: true
+#   dns_records:
+#     enabled: true
+
+# Scenario 4: Web-focused scan
+# Uncomment to use:
+# plugins:
+#   js_extractor:
+#     enabled: true
+#     config:
+#       max_js_files: 25
+#   http_headers:
+#     enabled: true
+#   subdomain_enum:
+#     enabled: true
+#     config:
+#       custom_wordlist: "web-subdomains.txt"
+#   ct_logs:
+#     enabled: false
+#   dns_records:
+#     enabled: false
