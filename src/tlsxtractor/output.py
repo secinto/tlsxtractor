@@ -3,11 +3,15 @@ Output formatting and JSON export.
 """
 
 import json
-from typing import List, Dict, Any, Set, Optional
+import re
 from datetime import datetime, timezone
 from pathlib import Path
-import re
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union
+
 import tldextract
+
+if TYPE_CHECKING:
+    from .domain_filter import DomainFilter
 
 
 class HostnameAnalyzer:
@@ -21,7 +25,7 @@ class HostnameAnalyzer:
     @staticmethod
     def is_wildcard(hostname: str) -> bool:
         """Check if hostname contains wildcard."""
-        return '*' in hostname
+        return "*" in hostname
 
     @staticmethod
     def extract_registrable_domain(hostname: str) -> Optional[str]:
@@ -76,7 +80,7 @@ class HostnameAnalyzer:
         try:
             ext = tldextract.extract(hostname)
             # Check if there's no subdomain and we have a valid domain
-            return not ext.subdomain and ext.domain and ext.suffix
+            return bool(not ext.subdomain and ext.domain and ext.suffix)
         except Exception:
             return False
 
@@ -88,19 +92,21 @@ class HostnameAnalyzer:
 
         # Basic hostname validation
         # Must have at least one dot (domain.tld)
-        if '.' not in hostname:
+        if "." not in hostname:
             return False
 
         # Must not start or end with dot
-        if hostname.startswith('.') or hostname.endswith('.'):
+        if hostname.startswith(".") or hostname.endswith("."):
             return False
 
         # Basic pattern check (alphanumeric, hyphens, dots)
-        pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$'
+        pattern = r"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
         return bool(re.match(pattern, hostname))
 
     @staticmethod
-    def analyze_results(results: Any, domain_filter: Optional['DomainFilter'] = None) -> Dict[str, Any]:
+    def analyze_results(
+        results: Any, domain_filter: Optional["DomainFilter"] = None
+    ) -> Dict[str, Any]:
         """
         Analyze scan results and extract hostname summary.
 
@@ -124,52 +130,48 @@ class HostnameAnalyzer:
         filtered_count = 0
 
         # Helper function to extract from a single result
-        def extract_from_result(result: Optional[Dict[str, Any]]):
-            # Skip if result is None
-            if result is None:
+        def extract_from_result(result: Optional[Dict[str, Any]]) -> None:
+            # Skip if result is None or not a dict
+            if result is None or not isinstance(result, dict):
                 return
-                
-            # Additional type safety check
-            if not isinstance(result, dict):
-                return
-
+            
             # Extract from SNI
-            if result and result.get('sni'):
-                all_hostnames.add(result['sni'])
+            if result.get("sni"):
+                all_hostnames.add(result["sni"])
 
             # Extract from domains list
-            if result and result.get('domains'):
-                for domain in result['domains']:
+            if result.get("domains"):
+                for domain in result["domains"]:
                     all_hostnames.add(domain)
 
             # Extract from certificate SAN
-            certificate = result.get('certificate') if result else None
-            if certificate and certificate.get('san'):
-                for san in certificate['san']:
+            certificate = result.get("certificate")
+            if certificate and certificate.get("san"):
+                for san in certificate["san"]:
                     all_hostnames.add(san)
 
             # Extract from certificate CN
-            if certificate and certificate.get('subject'):
-                cert_cn = certificate['subject'].get('commonName')
+            if certificate and certificate.get("subject"):
+                cert_cn = certificate["subject"].get("commonName")
                 if cert_cn:
                     all_hostnames.add(cert_cn)
 
         # Handle different result formats
         if isinstance(results, dict):
             # Mixed scan format with ips and urls
-            if 'ips' in results:
-                for result in results['ips']:
+            if "ips" in results:
+                for result in results["ips"]:
                     extract_from_result(result)
-            if 'urls' in results:
-                for url_result in results['urls']:
+            if "urls" in results:
+                for url_result in results["urls"]:
                     # Skip if url_result is None
                     if url_result is None:
                         continue
                     # Add hostname
-                    if url_result.get('hostname'):
-                        all_hostnames.add(url_result['hostname'])
+                    if url_result.get("hostname"):
+                        all_hostnames.add(url_result["hostname"])
                     # Extract from connections
-                    for conn in url_result.get('connections', []):
+                    for conn in url_result.get("connections", []):
                         extract_from_result(conn)
         elif isinstance(results, list):
             # Simple list format (ip_scan or url_scan)
@@ -182,7 +184,7 @@ class HostnameAnalyzer:
         registrable_domains: Set[str] = set()  # eTLD+1 / base domains
 
         for hostname in all_hostnames:
-            hostname = hostname.strip().strip('.')  # Remove leading/trailing dots
+            hostname = hostname.strip().strip(".")  # Remove leading/trailing dots
 
             if not hostname:
                 continue
@@ -240,7 +242,12 @@ class OutputFormatter:
     - JSON file writing implementation
     """
 
-    def __init__(self, output_path: str, mode: str = "ip_scan", domain_filter: Optional['DomainFilter'] = None):
+    def __init__(
+        self,
+        output_path: str,
+        mode: str = "ip_scan",
+        domain_filter: Optional["DomainFilter"] = None,
+    ):
         """
         Initialize output formatter.
 
@@ -255,7 +262,7 @@ class OutputFormatter:
 
     def create_output(
         self,
-        results: List[Dict[str, Any]],
+        results: Union[List[Dict[str, Any]], Dict[str, Any]],
         parameters: Dict[str, Any],
         statistics: Dict[str, Any],
     ) -> Dict[str, Any]:
@@ -263,7 +270,7 @@ class OutputFormatter:
         Create structured output dictionary.
 
         Args:
-            results: List of scan results
+            results: List of scan results or dict with 'ips' and 'urls' for mixed mode
             parameters: Scan parameters used
             statistics: Scan statistics
 

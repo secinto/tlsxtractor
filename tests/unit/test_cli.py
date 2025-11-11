@@ -2,15 +2,16 @@
 Unit tests for CLI module.
 """
 
-import pytest
 import argparse
-from unittest.mock import Mock, patch, AsyncMock
-from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
 from tlsxtractor.cli import (
-    create_parser,
-    validate_args,
     create_domain_filter,
+    create_parser,
     main,
+    validate_args,
 )
 
 
@@ -255,7 +256,9 @@ class TestDomainFilter:
     def test_create_domain_filter_with_csv(self):
         """Test creating filter with CSV domains."""
         parser = create_parser()
-        args = parser.parse_args(["--cidr", "192.168.1.0/24", "--exclude-domains", "example.com,test.com"])
+        args = parser.parse_args(
+            ["--cidr", "192.168.1.0/24", "--exclude-domains", "example.com,test.com"]
+        )
         domain_filter = create_domain_filter(args)
         assert domain_filter is not None
 
@@ -266,7 +269,9 @@ class TestDomainFilter:
         exclusion_file.write_text("example.com\ntest.com\n")
 
         parser = create_parser()
-        args = parser.parse_args(["--cidr", "192.168.1.0/24", "--exclude-domains", str(exclusion_file)])
+        args = parser.parse_args(
+            ["--cidr", "192.168.1.0/24", "--exclude-domains", str(exclusion_file)]
+        )
         domain_filter = create_domain_filter(args)
         assert domain_filter is not None
 
@@ -274,69 +279,69 @@ class TestDomainFilter:
 class TestMainFunction:
     """Test main entry point function."""
 
-    @patch('tlsxtractor.cli.asyncio.run')
-    @patch('tlsxtractor.cli.ConsoleOutput')
+    @patch("tlsxtractor.cli.asyncio.run")
+    @patch("tlsxtractor.cli.ConsoleOutput")
     def test_main_success_returns_zero(self, mock_console, mock_asyncio_run):
         """Test that main returns 0 on success."""
         mock_asyncio_run.return_value = 0
 
-        with patch('sys.argv', ['tlsxtractor', '--cidr', '192.168.1.0/24']):
+        with patch("sys.argv", ["tlsxtractor", "--cidr", "192.168.1.0/24"]):
             exit_code = main()
 
         assert exit_code == 0
         mock_asyncio_run.assert_called_once()
 
-    @patch('tlsxtractor.cli.asyncio.run')
-    @patch('tlsxtractor.cli.ConsoleOutput')
+    @patch("tlsxtractor.cli.asyncio.run")
+    @patch("tlsxtractor.cli.ConsoleOutput")
     def test_main_validation_error_returns_one(self, mock_console, mock_asyncio_run):
         """Test that main returns 1 on validation error."""
-        with patch('sys.argv', ['tlsxtractor', '--cidr', '192.168.1.0/24', '--port', '0']):
+        with patch("sys.argv", ["tlsxtractor", "--cidr", "192.168.1.0/24", "--port", "0"]):
             exit_code = main()
 
         assert exit_code == 1
         mock_asyncio_run.assert_not_called()
 
-    @patch('tlsxtractor.cli.asyncio.run')
-    @patch('tlsxtractor.cli.ConsoleOutput')
+    @patch("tlsxtractor.cli.asyncio.run")
+    @patch("tlsxtractor.cli.ConsoleOutput")
     def test_main_keyboard_interrupt_returns_130(self, mock_console, mock_asyncio_run):
         """Test that main returns 130 on KeyboardInterrupt."""
         mock_asyncio_run.side_effect = KeyboardInterrupt()
 
-        with patch('sys.argv', ['tlsxtractor', '--cidr', '192.168.1.0/24']):
+        with patch("sys.argv", ["tlsxtractor", "--cidr", "192.168.1.0/24"]):
             exit_code = main()
 
         assert exit_code == 130
 
-    @patch('tlsxtractor.cli.asyncio.run')
-    @patch('tlsxtractor.cli.ConsoleOutput')
+    @patch("tlsxtractor.cli.asyncio.run")
+    @patch("tlsxtractor.cli.ConsoleOutput")
     def test_main_exception_returns_one(self, mock_console, mock_asyncio_run):
         """Test that main returns 1 on exception."""
         mock_asyncio_run.side_effect = Exception("Test error")
 
-        with patch('sys.argv', ['tlsxtractor', '--cidr', '192.168.1.0/24']):
+        with patch("sys.argv", ["tlsxtractor", "--cidr", "192.168.1.0/24"]):
             exit_code = main()
 
         assert exit_code == 1
 
-    @patch('tlsxtractor.cli.asyncio.run')
-    @patch('tlsxtractor.cli.ConsoleOutput')
-    @patch('tlsxtractor.cli.logging.basicConfig')
+    @patch("tlsxtractor.cli.asyncio.run")
+    @patch("tlsxtractor.cli.ConsoleOutput")
+    @patch("tlsxtractor.cli.logging.basicConfig")
     def test_main_configures_logging(self, mock_logging_config, mock_console, mock_asyncio_run):
         """Test that main configures logging."""
         mock_asyncio_run.return_value = 0
 
-        with patch('sys.argv', ['tlsxtractor', '--cidr', '192.168.1.0/24', '--log-level', 'debug']):
+        with patch("sys.argv", ["tlsxtractor", "--cidr", "192.168.1.0/24", "--log-level", "debug"]):
             main()
 
         mock_logging_config.assert_called_once()
 
-    @patch('tlsxtractor.cli.asyncio.run')
-    @patch('tlsxtractor.cli.ConsoleOutput')
+    @patch("tlsxtractor.cli.asyncio.run")
+    @patch("tlsxtractor.cli.ConsoleOutput")
     def test_main_creates_console_output(self, mock_console, mock_asyncio_run):
         """Test that main creates ConsoleOutput instance."""
         mock_asyncio_run.return_value = 0
 
-        with patch('sys.argv', ['tlsxtractor', '--cidr', '192.168.1.0/24', '--quiet']):
+        with patch("sys.argv", ["tlsxtractor", "--cidr", "192.168.1.0/24", "--quiet"]):
             main()
 
         mock_console.assert_called_once()
@@ -344,7 +349,7 @@ class TestMainFunction:
         if args:
             assert args[0] is True  # quiet=True
         else:
-            assert kwargs.get('quiet') is True
+            assert kwargs.get("quiet") is True
 
 
 class TestCLIIntegration:
@@ -353,21 +358,33 @@ class TestCLIIntegration:
     def test_full_argument_parsing(self):
         """Test parsing all arguments together."""
         parser = create_parser()
-        args = parser.parse_args([
-            "--cidr", "192.168.1.0/24",
-            "--output", "results.json",
-            "--threads", "20",
-            "--rate-limit", "15",
-            "--timeout", "10",
-            "--port", "8443",
-            "--retry", "5",
-            "--fetch-csp",
-            "--allow-private",
-            "--exclude-domains", "example.com,test.com",
-            "--log-level", "debug",
-            "--log-file", "scan.log",
-            "--quiet",
-        ])
+        args = parser.parse_args(
+            [
+                "--cidr",
+                "192.168.1.0/24",
+                "--output",
+                "results.json",
+                "--threads",
+                "20",
+                "--rate-limit",
+                "15",
+                "--timeout",
+                "10",
+                "--port",
+                "8443",
+                "--retry",
+                "5",
+                "--fetch-csp",
+                "--allow-private",
+                "--exclude-domains",
+                "example.com,test.com",
+                "--log-level",
+                "debug",
+                "--log-file",
+                "scan.log",
+                "--quiet",
+            ]
+        )
 
         assert args.cidr == "192.168.1.0/24"
         assert args.output == "results.json"

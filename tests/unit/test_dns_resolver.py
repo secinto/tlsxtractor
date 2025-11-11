@@ -3,7 +3,7 @@ Unit tests for DNS resolver.
 """
 
 import pytest
-import asyncio
+
 from tlsxtractor.dns_resolver import DNSResolver, DNSResult
 
 

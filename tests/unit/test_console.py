@@ -2,10 +2,10 @@
 Unit tests for console output module.
 """
 
-import pytest
 import time
-from unittest.mock import Mock, patch
-from tlsxtractor.console import ScanStatistics, ConsoleOutput
+from unittest.mock import patch
+
+from tlsxtractor.console import ConsoleOutput, ScanStatistics
 
 
 class TestScanStatistics:
@@ -130,15 +130,15 @@ class TestConsoleOutput:
         supports_color = ConsoleOutput._supports_color()
         assert isinstance(supports_color, bool)
 
-    @patch('sys.stdout.isatty')
+    @patch("sys.stdout.isatty")
     def test_supports_color_not_tty(self, mock_isatty):
         """Test color support when not a TTY."""
         mock_isatty.return_value = False
         supports_color = ConsoleOutput._supports_color()
         assert supports_color is False
 
-    @patch('sys.stdout.isatty')
-    @patch('os.environ.get')
+    @patch("sys.stdout.isatty")
+    @patch("os.environ.get")
     def test_supports_color_dumb_terminal(self, mock_env_get, mock_isatty):
         """Test color support with dumb terminal."""
         mock_isatty.return_value = True
@@ -159,16 +159,16 @@ class TestConsoleOutput:
         colored = console._colorize("test", "32")
         assert colored == "test"
 
-    @patch('sys.stdout.write')
-    @patch('sys.stdout.flush')
+    @patch("sys.stdout.write")
+    @patch("sys.stdout.flush")
     def test_info_output(self, mock_flush, mock_write):
         """Test info message output."""
         console = ConsoleOutput(quiet=False)
         console.info("Test message")
         mock_write.assert_called()
 
-    @patch('sys.stdout.write')
-    @patch('sys.stdout.flush')
+    @patch("sys.stdout.write")
+    @patch("sys.stdout.flush")
     def test_info_output_quiet_mode(self, mock_flush, mock_write):
         """Test info message output in quiet mode."""
         console = ConsoleOutput(quiet=True)
@@ -176,24 +176,24 @@ class TestConsoleOutput:
         # Should not write in quiet mode
         mock_write.assert_not_called()
 
-    @patch('sys.stderr.write')
-    @patch('sys.stderr.flush')
+    @patch("sys.stderr.write")
+    @patch("sys.stderr.flush")
     def test_error_output(self, mock_flush, mock_write):
         """Test error message output."""
         console = ConsoleOutput()
         console.error("Error message")
         mock_write.assert_called()
 
-    @patch('sys.stderr.write')
-    @patch('sys.stderr.flush')
+    @patch("sys.stderr.write")
+    @patch("sys.stderr.flush")
     def test_warning_output(self, mock_flush, mock_write):
         """Test warning message output."""
         console = ConsoleOutput()
         console.warning("Warning message")
         mock_write.assert_called()
 
-    @patch('sys.stdout.write')
-    @patch('sys.stdout.flush')
+    @patch("sys.stdout.write")
+    @patch("sys.stdout.flush")
     def test_success_output(self, mock_flush, mock_write):
         """Test success message output."""
         console = ConsoleOutput()
@@ -206,16 +206,16 @@ class TestConsoleOutput:
         console._progress_update_interval = 1.0
 
         # First update should go through
-        with patch.object(console, '_clear_line'):
-            with patch('sys.stdout.write'):
-                with patch('sys.stdout.flush'):
+        with patch.object(console, "_clear_line"):
+            with patch("sys.stdout.write"):
+                with patch("sys.stdout.flush"):
                     console.update_progress(ScanStatistics(total_targets=100, scanned=10))
 
         # Immediate second update should be throttled
         last_update = console._last_progress_update
-        with patch.object(console, '_clear_line') as mock_clear:
-            with patch('sys.stdout.write'):
-                with patch('sys.stdout.flush'):
+        with patch.object(console, "_clear_line"):
+            with patch("sys.stdout.write"):
+                with patch("sys.stdout.flush"):
                     console.update_progress(ScanStatistics(total_targets=100, scanned=11))
 
         # Should use same last_update time (throttled)
@@ -252,9 +252,9 @@ class TestConsoleOutput:
             domains_found=450,
         )
 
-        with patch.object(console, 'info'):
-            with patch.object(console, 'success'):
-                with patch.object(console, 'warning'):
+        with patch.object(console, "info"):
+            with patch.object(console, "success"):
+                with patch.object(console, "warning"):
                     console.print_summary(stats)
 
     def test_thread_safety(self):
@@ -265,8 +265,8 @@ class TestConsoleOutput:
         results = []
 
         def write_message(msg):
-            with patch('sys.stdout.write'):
-                with patch('sys.stdout.flush'):
+            with patch("sys.stdout.write"):
+                with patch("sys.stdout.flush"):
                     console.info(msg)
                     results.append(msg)
 
@@ -292,14 +292,16 @@ class TestConsoleOutputIntegration:
         """Test complete scan progress workflow."""
         console = ConsoleOutput(quiet=False)
 
-        with patch('sys.stdout.write'):
-            with patch('sys.stdout.flush'):
+        with patch("sys.stdout.write"):
+            with patch("sys.stdout.flush"):
                 # Start message
                 console.info("Starting scan...")
 
                 # Progress updates
                 for i in range(0, 101, 10):
-                    stats = ScanStatistics(total_targets=100, scanned=i, successful=i, domains_found=i * 5)
+                    stats = ScanStatistics(
+                        total_targets=100, scanned=i, successful=i, domains_found=i * 5
+                    )
                     # Force update by resetting last update time
                     console._last_progress_update = 0
                     console.update_progress(stats)
@@ -318,8 +320,8 @@ class TestConsoleOutputIntegration:
         """Test error handling in console output."""
         console = ConsoleOutput()
 
-        with patch('sys.stderr.write'):
-            with patch('sys.stderr.flush'):
+        with patch("sys.stderr.write"):
+            with patch("sys.stderr.flush"):
                 console.error("Connection failed")
                 console.warning("Retrying...")
                 console.info("Retry successful")
@@ -329,10 +331,10 @@ class TestConsoleOutputIntegration:
         """Test that quiet mode suppresses appropriate output."""
         console = ConsoleOutput(quiet=True)
 
-        with patch('sys.stdout.write') as mock_stdout:
-            with patch('sys.stderr.write') as mock_stderr:
-                with patch('sys.stdout.flush'):
-                    with patch('sys.stderr.flush'):
+        with patch("sys.stdout.write") as mock_stdout:
+            with patch("sys.stderr.write") as mock_stderr:
+                with patch("sys.stdout.flush"):
+                    with patch("sys.stderr.flush"):
                         # Info should be suppressed
                         console.info("Info message")
                         assert mock_stdout.call_count == 0

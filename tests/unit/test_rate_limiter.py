@@ -2,10 +2,12 @@
 Unit tests for rate limiter.
 """
 
-import pytest
 import asyncio
 import time
-from tlsxtractor.rate_limiter import RateLimiter, AdaptiveRateLimiter
+
+import pytest
+
+from tlsxtractor.rate_limiter import AdaptiveRateLimiter, RateLimiter
 
 
 @pytest.mark.asyncio

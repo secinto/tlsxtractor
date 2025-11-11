@@ -2,7 +2,7 @@
 Unit tests for CSP extraction module.
 """
 
-import pytest
+
 from tlsxtractor.csp_extractor import CSPExtractor
 
 
@@ -192,7 +192,7 @@ class TestExtractDomainsFromCSP:
         directives = {
             "default-src": ["'self'"],
             "script-src": ["https://cdn.example.com", "https://api.example.com"],
-            "style-src": ["https://fonts.googleapis.com"]
+            "style-src": ["https://fonts.googleapis.com"],
         }
 
         domains = extractor.extract_domains_from_csp(directives)
@@ -206,13 +206,7 @@ class TestExtractDomainsFromCSP:
         """Test that CSP keywords are filtered out."""
         extractor = CSPExtractor()
         directives = {
-            "script-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "https://example.com",
-                "data:",
-                "blob:"
-            ]
+            "script-src": ["'self'", "'unsafe-inline'", "https://example.com", "data:", "blob:"]
         }
 
         domains = extractor.extract_domains_from_csp(directives)
@@ -223,13 +217,7 @@ class TestExtractDomainsFromCSP:
     def test_extract_domains_filters_nonces(self):
         """Test that nonce values are filtered out."""
         extractor = CSPExtractor()
-        directives = {
-            "script-src": [
-                "'nonce-abc123'",
-                "'sha256-xyz'",
-                "https://example.com"
-            ]
-        }
+        directives = {"script-src": ["'nonce-abc123'", "'sha256-xyz'", "https://example.com"]}
 
         domains = extractor.extract_domains_from_csp(directives)
 
@@ -244,7 +232,7 @@ class TestExtractDomainsFromCSP:
             "style-src": ["https://style.example.com"],
             "img-src": ["https://images.example.com"],
             "connect-src": ["wss://socket.example.com"],
-            "font-src": ["https://fonts.example.com"]
+            "font-src": ["https://fonts.example.com"],
         }
 
         domains = extractor.extract_domains_from_csp(directives)
@@ -259,7 +247,7 @@ class TestExtractDomainsFromCSP:
         directives = {
             "script-src": ["https://example.com"],
             "report-uri": ["/csp-report"],  # Not a domain directive
-            "upgrade-insecure-requests": []  # Not a domain directive
+            "upgrade-insecure-requests": [],  # Not a domain directive
         }
 
         domains = extractor.extract_domains_from_csp(directives)
@@ -273,7 +261,7 @@ class TestExtractDomainsFromCSP:
         directives = {
             "script-src": ["https://example.com"],
             "style-src": ["https://example.com"],
-            "img-src": ["example.com"]
+            "img-src": ["example.com"],
         }
 
         domains = extractor.extract_domains_from_csp(directives)
@@ -290,9 +278,7 @@ class TestExtractDomainsFromCSP:
     def test_extract_domains_wildcard_subdomains(self):
         """Test extracting wildcard subdomains."""
         extractor = CSPExtractor()
-        directives = {
-            "script-src": ["*.example.com", "*.cdn.example.net"]
-        }
+        directives = {"script-src": ["*.example.com", "*.cdn.example.net"]}
 
         domains = extractor.extract_domains_from_csp(directives)
 
@@ -303,9 +289,7 @@ class TestExtractDomainsFromCSP:
     def test_extract_domains_sorted(self):
         """Test that extracted domains are sorted."""
         extractor = CSPExtractor()
-        directives = {
-            "script-src": ["zebra.com", "apple.com", "microsoft.com"]
-        }
+        directives = {"script-src": ["zebra.com", "apple.com", "microsoft.com"]}
 
         domains = extractor.extract_domains_from_csp(directives)
 

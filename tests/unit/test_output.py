@@ -2,7 +2,7 @@
 Unit tests for output module.
 """
 
-import pytest
+
 from tlsxtractor.output import HostnameAnalyzer
 
 
@@ -239,12 +239,12 @@ class TestHostnameAnalyzer:
         results = [
             {
                 "domains": [
-                    "example.com",           # registrable
-                    "api.example.com",       # subdomain
-                    "test.org",              # registrable
-                    "www.test.org",          # subdomain
-                    "example.co.uk",         # registrable (multi-part TLD)
-                    "cdn.example.co.uk",     # subdomain of multi-part TLD
+                    "example.com",  # registrable
+                    "api.example.com",  # subdomain
+                    "test.org",  # registrable
+                    "www.test.org",  # subdomain
+                    "example.co.uk",  # registrable (multi-part TLD)
+                    "cdn.example.co.uk",  # subdomain of multi-part TLD
                 ],
             },
         ]

@@ -7,12 +7,11 @@ Implements IMPL-011: DNS resolution with caching and timeout handling.
 import asyncio
 import logging
 import time
-from typing import List, Dict, Optional, Set, Tuple
-from dataclasses import dataclass
 from collections import OrderedDict
-import aiodns
-import socket
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+import aiodns
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +134,11 @@ class DNSResolver:
         """
         self.timeout = timeout
         self.cache_enabled = cache_enabled
-        self._cache = LRUCache(maxsize=cache_maxsize, ttl=cache_ttl) if cache_enabled else None
+        self._cache = (
+            LRUCache(maxsize=cache_maxsize, ttl=cache_ttl)
+            if cache_enabled
+            else None
+        )
         self._resolver = aiodns.DNSResolver(timeout=timeout)
         self._cache_hits = 0
         self._cache_misses = 0
@@ -155,7 +158,10 @@ class DNSResolver:
             cached = self._cache.get(hostname)
             if cached:
                 self._cache_hits += 1
-                logger.debug(f"DNS cache hit for {hostname} (hits: {self._cache_hits})")
+                logger.debug(
+                    f"DNS cache hit for {hostname} "
+                    f"(hits: {self._cache_hits})"
+                )
                 return cached
             self._cache_misses += 1
 
@@ -166,11 +172,14 @@ class DNSResolver:
             # Query A records (IPv4)
             try:
                 a_records = await asyncio.wait_for(
-                    self._resolver.query(hostname, "A"), timeout=self.timeout
+                    self._resolver.query(hostname, "A"),
+                    timeout=self.timeout,
                 )
                 for record in a_records:
                     ips.add(record.host)
-                logger.debug(f"Resolved {hostname} A records: {len(a_records)}")
+                logger.debug(
+                    f"Resolved {hostname} A records: {len(a_records)}"
+                )
             except aiodns.error.DNSError as e:
                 if e.args[0] == aiodns.error.ARES_ENOTFOUND:
                     # No A records, try AAAA
@@ -183,11 +192,16 @@ class DNSResolver:
             # Query AAAA records (IPv6)
             try:
                 aaaa_records = await asyncio.wait_for(
-                    self._resolver.query(hostname, "AAAA"), timeout=self.timeout
+                    self._resolver.query(hostname, "AAAA"),
+                    timeout=self.timeout,
                 )
-                for record in aaaa_records:
-                    ips.add(record.host)
-                logger.debug(f"Resolved {hostname} AAAA records: {len(aaaa_records)}")
+                aaaa_record: Any
+                for aaaa_record in aaaa_records:
+                    ips.add(aaaa_record.host)
+                logger.debug(
+                    f"Resolved {hostname} AAAA records: "
+                    f"{len(aaaa_records)}"
+                )
             except aiodns.error.DNSError as e:
                 if e.args[0] == aiodns.error.ARES_ENOTFOUND:
                     pass
@@ -205,9 +219,7 @@ class DNSResolver:
                     error="No DNS records found",
                 )
             else:
-                result = DNSResult(
-                    hostname=hostname, ips=sorted(list(ips)), status="success"
-                )
+                result = DNSResult(hostname=hostname, ips=sorted(list(ips)), status="success")
 
         except asyncio.TimeoutError:
             logger.debug(f"DNS timeout for {hostname}")
@@ -217,9 +229,7 @@ class DNSResolver:
         except aiodns.error.DNSError as e:
             logger.debug(f"DNS error for {hostname}: {e}")
             error_msg = self._parse_dns_error(e)
-            result = DNSResult(
-                hostname=hostname, ips=[], status="error", error=error_msg
-            )
+            result = DNSResult(hostname=hostname, ips=[], status="error", error=error_msg)
         except Exception as e:
             logger.debug(f"Unexpected DNS error for {hostname}: {e}")
             result = DNSResult(
@@ -251,7 +261,7 @@ class DNSResolver:
         """
         semaphore = asyncio.Semaphore(concurrency)
 
-        async def resolve_with_semaphore(hostname: str):
+        async def resolve_with_semaphore(hostname: str) -> Tuple[str, DNSResult]:
             async with semaphore:
                 return hostname, await self.resolve_hostname(hostname)
 
@@ -264,8 +274,9 @@ class DNSResolver:
             if isinstance(result, Exception):
                 logger.error(f"DNS resolution exception: {result}")
                 continue
-            hostname, dns_result = result
-            result_dict[hostname] = dns_result
+            if isinstance(result, tuple) and len(result) == 2:
+                hostname, dns_result = result
+                result_dict[hostname] = dns_result
 
         return result_dict
 
@@ -300,7 +311,7 @@ class DNSResolver:
             self._cache_misses = 0
             logger.debug("DNS cache cleared")
 
-    def get_cache_stats(self) -> Dict[str, any]:
+    def get_cache_stats(self) -> Dict[str, Any]:
         """
         Get DNS cache statistics.
 
