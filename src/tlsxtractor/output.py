@@ -100,13 +100,18 @@ class HostnameAnalyzer:
         return bool(re.match(pattern, hostname))
 
     @staticmethod
-    def analyze_results(results: Any, domain_filter: Optional['DomainFilter'] = None) -> Dict[str, Any]:
+    def analyze_results(
+        results: Any,
+        domain_filter: Optional['DomainFilter'] = None,
+        input_hostnames: Optional[Set[str]] = None
+    ) -> Dict[str, Any]:
         """
         Analyze scan results and extract hostname summary.
 
         Args:
             results: Scan results (can be list or dict with ips/urls)
             domain_filter: Optional DomainFilter to apply exclusions
+            input_hostnames: Optional set of input hostnames to compare against for new discoveries
 
         Returns:
             Dictionary with hostname analysis:
@@ -116,7 +121,11 @@ class HostnameAnalyzer:
                 "wildcards": [...],       # Wildcards found (informational)
                 "total_hostnames": int,   # Count of subdomains
                 "total_tlds": int,        # Count of unique registrable domains
-                "filtered_count": int     # Number of filtered domains (if filter provided)
+                "filtered_count": int,    # Number of filtered domains (if filter provided)
+                "new_hostnames": [...],   # Newly discovered subdomains (not in input)
+                "new_tlds": [...],        # Newly discovered TLDs (not in input)
+                "total_new_hostnames": int,
+                "total_new_tlds": int
             }
         """
         all_hostnames: Set[str] = set()
@@ -175,7 +184,17 @@ class HostnameAnalyzer:
             # Simple list format (ip_scan or url_scan)
             for result in results:
                 if result is not None and isinstance(result, dict):
-                    extract_from_result(result)
+                    # Check if this is url_scan format with connections
+                    if 'connections' in result:
+                        # Add hostname from url_scan format
+                        if result.get('hostname'):
+                            all_hostnames.add(result['hostname'])
+                        # Extract from each connection
+                        for conn in result.get('connections', []):
+                            extract_from_result(conn)
+                    else:
+                        # ip_scan format - extract directly
+                        extract_from_result(result)
 
         # Separate wildcards, subdomains, and registrable domains
         regular_hostnames: Set[str] = set()  # Subdomains only
@@ -216,12 +235,44 @@ class HostnameAnalyzer:
                 if registrable:
                     registrable_domains.add(registrable)
 
+        # Compute new discoveries (hostnames not in input)
+        new_hostnames: Set[str] = set()
+        new_tlds: Set[str] = set()
+
+        if input_hostnames is not None:
+            # Normalize input hostnames to lowercase for comparison
+            input_normalized = {h.lower() for h in input_hostnames}
+
+            # Also extract TLDs from input hostnames for comparison
+            input_tlds: Set[str] = set()
+            for h in input_normalized:
+                tld = HostnameAnalyzer.extract_registrable_domain(h)
+                if tld:
+                    input_tlds.add(tld.lower())
+                # If the input itself is a TLD, add it
+                if HostnameAnalyzer.is_registrable_domain(h):
+                    input_tlds.add(h)
+
+            # Find new subdomains (not in input)
+            for hostname in regular_hostnames:
+                if hostname not in input_normalized:
+                    new_hostnames.add(hostname)
+
+            # Find new TLDs (not derived from input hostnames)
+            for tld in registrable_domains:
+                if tld not in input_tlds:
+                    new_tlds.add(tld)
+
         result = {
             "hostnames": sorted(list(regular_hostnames)),
             "tlds": sorted(list(registrable_domains)),
             "wildcards": sorted(list(wildcards)),
             "total_hostnames": len(regular_hostnames),
             "total_tlds": len(registrable_domains),
+            "new_hostnames": sorted(list(new_hostnames)),
+            "new_tlds": sorted(list(new_tlds)),
+            "total_new_hostnames": len(new_hostnames),
+            "total_new_tlds": len(new_tlds),
         }
 
         # Add filtered count if filtering was applied
@@ -258,6 +309,7 @@ class OutputFormatter:
         results: List[Dict[str, Any]],
         parameters: Dict[str, Any],
         statistics: Dict[str, Any],
+        input_hostnames: Optional[Set[str]] = None,
     ) -> Dict[str, Any]:
         """
         Create structured output dictionary.
@@ -266,12 +318,15 @@ class OutputFormatter:
             results: List of scan results
             parameters: Scan parameters used
             statistics: Scan statistics
+            input_hostnames: Optional set of input hostnames for new discovery comparison
 
         Returns:
             Complete output structure
         """
-        # Analyze hostnames from results with optional filtering
-        hostname_analysis = HostnameAnalyzer.analyze_results(results, self.domain_filter)
+        # Analyze hostnames from results with optional filtering and input comparison
+        hostname_analysis = HostnameAnalyzer.analyze_results(
+            results, self.domain_filter, input_hostnames
+        )
 
         # Add filtered count to statistics if filtering was applied
         if self.domain_filter and "filtered_count" in hostname_analysis:

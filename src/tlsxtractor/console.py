@@ -133,7 +133,7 @@ class ConsoleOutput:
         with self._lock:
             print(message)
 
-    def print_domain_found(self, ip: str, port: int, domains: list) -> None:
+    def print_domain_found(self, ip: str, port: int, domains: list, hostname: Optional[str] = None) -> None:
         """
         Print discovered domains.
 
@@ -141,6 +141,7 @@ class ConsoleOutput:
             ip: Source IP address
             port: Source port
             domains: List of discovered domain names
+            hostname: Optional hostname/SNI that was scanned
         """
         if self.quiet or not domains:
             return
@@ -151,7 +152,8 @@ class ConsoleOutput:
                 print(f"\r{' ' * 120}\r", end="")  # Clear the line
 
             domain_list = ", ".join(domains)
-            message = f"[{ip}:{port}] Found domains: {domain_list}"
+            host_info = f" ({hostname})" if hostname else ""
+            message = f"[{ip}:{port}]{host_info} Found domains: {domain_list}"
             colored = self._colorize(message, "36")  # Cyan
             print(colored)  # Print domain finding on new line
 
@@ -159,7 +161,7 @@ class ConsoleOutput:
             if self._progress_line_active and self._last_progress_line:
                 print(f"\r{self._last_progress_line}", end="", flush=True)
 
-    def print_csp_domains(self, ip: str, port: int, csp_domains: list) -> None:
+    def print_csp_domains(self, ip: str, port: int, csp_domains: list, hostname: Optional[str] = None) -> None:
         """
         Print CSP domains discovered.
 
@@ -167,6 +169,7 @@ class ConsoleOutput:
             ip: Source IP address
             port: Source port
             csp_domains: List of domains from CSP header
+            hostname: Optional hostname/SNI that was scanned
         """
         if self.quiet or not csp_domains:
             return
@@ -178,7 +181,8 @@ class ConsoleOutput:
 
             domain_list = ", ".join(csp_domains[:10])  # Limit to first 10 for display
             count_msg = f" (+{len(csp_domains) - 10} more)" if len(csp_domains) > 10 else ""
-            message = f"[{ip}:{port}] CSP domains: {domain_list}{count_msg}"
+            host_info = f" ({hostname})" if hostname else ""
+            message = f"[{ip}:{port}]{host_info} CSP domains: {domain_list}{count_msg}"
             colored = self._colorize(message, "35")  # Magenta
             print(colored)
 
@@ -270,6 +274,44 @@ class ConsoleOutput:
                 print(f"Success rate:       {success_rate:.1f}%")
 
             print("=" * 60)
+
+    def print_new_discoveries(self, new_hostnames: list, new_tlds: list) -> None:
+        """
+        Print newly discovered hostnames (not in original input).
+
+        Args:
+            new_hostnames: List of newly discovered subdomains
+            new_tlds: List of newly discovered root domains/TLDs
+        """
+        if self.quiet:
+            return
+
+        # Only print if there are new discoveries
+        if not new_hostnames and not new_tlds:
+            return
+
+        with self._lock:
+            print("\n" + "-" * 60)
+            header = "Newly Discovered Hostnames (not in input)"
+            colored_header = self._colorize(header, "32")  # Green
+            print(colored_header)
+            print("-" * 60)
+
+            if new_hostnames:
+                print(f"\nSubdomains ({len(new_hostnames)}):")
+                for hostname in sorted(new_hostnames)[:50]:  # Limit display to 50
+                    print(f"  - {hostname}")
+                if len(new_hostnames) > 50:
+                    print(f"  ... and {len(new_hostnames) - 50} more")
+
+            if new_tlds:
+                print(f"\nRoot Domains ({len(new_tlds)}):")
+                for tld in sorted(new_tlds)[:50]:  # Limit display to 50
+                    print(f"  - {tld}")
+                if len(new_tlds) > 50:
+                    print(f"  ... and {len(new_tlds) - 50} more")
+
+            print("\n" + "=" * 60)
 
     @staticmethod
     def _format_duration(seconds: float) -> str:

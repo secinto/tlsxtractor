@@ -17,6 +17,9 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Scan a single URL or hostname
+  tlsxtractor -u example.com -o results.json
+
   # Scan a CIDR range
   tlsxtractor --cidr 192.168.1.0/24 --output results.json
 
@@ -37,6 +40,7 @@ Examples:
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--cidr", metavar="CIDR", help="Scan IP range in CIDR notation")
     input_group.add_argument("--file", "-f", metavar="FILE", help="Input file (supports mixed IPs, URLs, and hostnames)")
+    input_group.add_argument("--url", "-u", metavar="URL", help="Single URL or hostname to scan")
 
     # Output options
     parser.add_argument(
@@ -283,6 +287,9 @@ async def run_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int:
     # Handle --cidr argument
     elif args.cidr:
         return await run_ip_scan(args, console)
+    # Handle --url argument for single URL
+    elif args.url:
+        return await run_single_url_scan(args, console)
     else:
         console.error("No valid input specified")
         return 1
@@ -421,11 +428,11 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                     for domain in result.domains:
                         unique_domains.add(domain)
                     stats.domains_found = len(unique_domains)
-                    console.print_domain_found(result.ip, result.port, result.domains)
+                    console.print_domain_found(result.ip, result.port, result.domains, result.sni)
 
                 # Print CSP domains separately if found
                 if result.domain_sources.get("csp"):
-                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"])
+                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"], result.sni)
 
                 # Map back to URLs if applicable
                 if result.sni:  # This was a URL/hostname target
@@ -494,6 +501,9 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                 ],
             })
 
+        # Collect input hostnames for comparison
+        input_hostnames = set(hostnames)
+
         # Prepare output data
         output_data = output_formatter.create_output(
             results={
@@ -531,6 +541,14 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                 "elapsed_seconds": stats.elapsed_time,
                 "scan_rate": stats.scan_rate,
             },
+            input_hostnames=input_hostnames,
+        )
+
+        # Print newly discovered hostnames
+        discovered_hosts = output_data.get("discovered_hosts", {})
+        console.print_new_discoveries(
+            discovered_hosts.get("new_hostnames", []),
+            discovered_hosts.get("new_tlds", [])
         )
 
         if args.output == "-":
@@ -645,11 +663,11 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
                     for domain in result.domains:
                         unique_domains.add(domain)
                     stats.domains_found = len(unique_domains)
-                    console.print_domain_found(result.ip, result.port, result.domains)
+                    console.print_domain_found(result.ip, result.port, result.domains, result.sni)
 
                 # Print CSP domains separately if found
                 if result.domain_sources.get("csp"):
-                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"])
+                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"], result.sni)
             else:
                 stats.failed += 1
                 logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
@@ -685,6 +703,9 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
         domain_filter = create_domain_filter(args)
         output_formatter = OutputFormatter(args.output, mode="ip_scan", domain_filter=domain_filter)
 
+        # For IP scans, input has no hostnames - all discoveries are "new"
+        input_hostnames: set = set()
+
         # Prepare output data
         output_data = output_formatter.create_output(
             results=[
@@ -717,6 +738,245 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
                 "elapsed_seconds": stats.elapsed_time,
                 "scan_rate": stats.scan_rate,
             },
+            input_hostnames=input_hostnames,
+        )
+
+        # Print newly discovered hostnames
+        discovered_hosts = output_data.get("discovered_hosts", {})
+        console.print_new_discoveries(
+            discovered_hosts.get("new_hostnames", []),
+            discovered_hosts.get("new_tlds", [])
+        )
+
+        if args.output == "-":
+            output_formatter.write_stdout(output_data)
+        else:
+            output_formatter.write_json(output_data)
+            console.success(f"Results written to: {args.output}")
+
+    except Exception as e:
+        console.error(f"Failed to write output: {e}")
+        logger.exception("Error writing output")
+        return 1
+
+    return 0
+
+
+async def run_single_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int:
+    """
+    Execute single URL scan mode (single URL/hostname from command line).
+
+    Args:
+        args: Parsed command-line arguments
+        console: Console output handler
+
+    Returns:
+        Exit code
+    """
+    from .scanner import TLSScanner
+    from .input_parser import InputParser
+    from .dns_resolver import DNSResolver
+    from .output import OutputFormatter
+    from .console import ScanStatistics
+    from urllib.parse import urlparse
+    import logging
+    import asyncio
+
+    logger = logging.getLogger(__name__)
+
+    # Parse the single URL
+    original_url = args.url.strip()
+    console.info(f"Scanning URL: {original_url}")
+
+    # Add scheme if missing
+    url_to_parse = original_url
+    if not url_to_parse.startswith(("http://", "https://")):
+        url_to_parse = f"https://{url_to_parse}"
+
+    try:
+        parsed = urlparse(url_to_parse)
+        if not parsed.hostname:
+            console.error(f"Invalid URL: {original_url}")
+            return 1
+
+        hostname = parsed.hostname
+        port = parsed.port if parsed.port else (443 if parsed.scheme == "https" else 80)
+
+        # Override with --port if specified and URL doesn't have explicit port
+        if parsed.port is None and args.port != 443:
+            port = args.port
+
+    except Exception as e:
+        console.error(f"Failed to parse URL: {original_url} - {e}")
+        return 1
+
+    # Initialize components
+    scanner = TLSScanner(
+        timeout=args.timeout,
+        retry_count=args.retry,
+        port=port,
+        fetch_csp=args.fetch_csp,
+    )
+    dns_resolver = DNSResolver(timeout=args.timeout)
+
+    # Resolve hostname
+    console.info(f"Resolving hostname: {hostname}")
+    dns_map = await dns_resolver.resolve_multiple([hostname], concurrency=1)
+    dns_result = dns_map.get(hostname)
+
+    if not dns_result or dns_result.status != "success" or not dns_result.ips:
+        error_msg = dns_result.error if dns_result else "DNS resolution failed"
+        console.error(f"Failed to resolve {hostname}: {error_msg}")
+        return 1
+
+    resolved_ips = dns_result.ips
+
+    # Filter private IPs if needed
+    if not args.allow_private:
+        filtered_ips = [ip for ip in resolved_ips if not InputParser.is_private_ip(ip)]
+        if len(filtered_ips) < len(resolved_ips):
+            console.warning(
+                f"Filtered {len(resolved_ips) - len(filtered_ips)} private IP(s). Use --allow-private to scan them."
+            )
+        resolved_ips = filtered_ips
+
+    if not resolved_ips:
+        console.error("No valid IPs to scan after filtering")
+        return 1
+
+    console.info(f"Resolved to {len(resolved_ips)} IP(s): {', '.join(resolved_ips)}")
+
+    # Prepare scan targets
+    scan_targets = [(ip, port, hostname) for ip in resolved_ips]
+    total_targets = len(scan_targets)
+
+    console.info(f"Starting scan of {total_targets} target(s)")
+    console.info(f"Timeout: {args.timeout}s, Port: {port}")
+
+    # Initialize statistics
+    stats = ScanStatistics(total_targets=total_targets)
+
+    # Show initial progress bar
+    if not args.quiet:
+        console.print_progress(stats, force=True)
+
+    try:
+        # Track progress
+        async def update_progress():
+            while True:
+                await asyncio.sleep(2)
+                if not args.quiet:
+                    console.print_progress(stats)
+
+        progress_task = asyncio.create_task(update_progress())
+
+        # Create progress callback
+        unique_domains = set()
+        scan_results = []
+
+        async def progress_callback(result: "ScanResult"):
+            scan_results.append(result)
+            stats.scanned += 1
+
+            if result.status == "success":
+                stats.successful += 1
+                if result.domains:
+                    for domain in result.domains:
+                        unique_domains.add(domain)
+                    stats.domains_found = len(unique_domains)
+                    console.print_domain_found(result.ip, result.port, result.domains, result.sni)
+
+                # Print CSP domains separately if found
+                if result.domain_sources.get("csp"):
+                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"], result.sni)
+            else:
+                stats.failed += 1
+                logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
+
+        # Perform scan
+        results = await scanner.scan_multiple(
+            scan_targets,
+            concurrency=args.threads,
+            rate_limit=args.rate_limit,
+            progress_callback=progress_callback
+        )
+
+        # Cancel progress task
+        progress_task.cancel()
+        try:
+            await progress_task
+        except asyncio.CancelledError:
+            pass
+
+    except Exception as e:
+        console.error(f"Scan error: {e}")
+        logger.exception("Error during scanning")
+        return 1
+
+    # Update final statistics
+    stats.domains_found = len(unique_domains)
+
+    # Print summary
+    console.print_summary(stats)
+
+    # Export results
+    try:
+        domain_filter = create_domain_filter(args)
+        output_formatter = OutputFormatter(args.output, mode="url_scan", domain_filter=domain_filter)
+
+        # Build result in URL scan format
+        url_result = {
+            "url": original_url,
+            "hostname": hostname,
+            "port": port,
+            "dns_status": "success",
+            "resolved_ips": resolved_ips,
+            "connections": [
+                {
+                    "ip": r.ip,
+                    "port": r.port,
+                    "status": r.status,
+                    "sni": r.sni,
+                    "domains": r.domains,
+                    "domain_sources": r.domain_sources,
+                    "tls_version": r.tls_version,
+                    "error": r.error,
+                    "certificate": r.certificate,
+                }
+                for r in scan_results
+            ],
+        }
+
+        # Input hostname for comparison
+        input_hostnames = {hostname}
+
+        output_data = output_formatter.create_output(
+            results=[url_result],
+            parameters={
+                "input": original_url,
+                "port": port,
+                "timeout": args.timeout,
+                "threads": args.threads,
+                "retry": args.retry,
+            },
+            statistics={
+                "total_urls": 1,
+                "total_ips_scanned": total_targets,
+                "scanned": stats.scanned,
+                "successful": stats.successful,
+                "failed": stats.failed,
+                "unique_domains": stats.domains_found,
+                "elapsed_seconds": stats.elapsed_time,
+                "scan_rate": stats.scan_rate,
+            },
+            input_hostnames=input_hostnames,
+        )
+
+        # Print newly discovered hostnames
+        discovered_hosts = output_data.get("discovered_hosts", {})
+        console.print_new_discoveries(
+            discovered_hosts.get("new_hostnames", []),
+            discovered_hosts.get("new_tlds", [])
         )
 
         if args.output == "-":
@@ -896,11 +1156,11 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
                 if result.domains:
                     for domain in result.domains:
                         unique_domains.add(domain)
-                    console.print_domain_found(result.ip, result.port, result.domains)
+                    console.print_domain_found(result.ip, result.port, result.domains, result.sni)
 
                 # Print CSP domains separately if found
                 if result.domain_sources.get("csp"):
-                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"])
+                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"], result.sni)
             else:
                 stats.failed += 1
                 logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
