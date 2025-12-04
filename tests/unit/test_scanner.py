@@ -3,8 +3,8 @@ Unit tests for TLS scanner.
 """
 
 import pytest
-import asyncio
-from tlsxtractor.scanner import TLSScanner, ScanResult
+
+from tlsxtractor.scanner import ScanResult, TLSScanner
 
 
 @pytest.mark.asyncio

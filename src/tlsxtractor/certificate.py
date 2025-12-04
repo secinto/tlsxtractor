@@ -2,7 +2,8 @@
 X.509 certificate parsing and domain extraction.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List
+
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 
@@ -37,9 +38,7 @@ class CertificateParser:
                 "validity": CertificateParser._extract_validity(cert),
             }
         except Exception as e:
-            return {
-                "error": f"Certificate parsing failed: {str(e)}"
-            }
+            return {"error": f"Certificate parsing failed: {str(e)}"}
 
     @staticmethod
     def _extract_subject(cert: x509.Certificate) -> Dict[str, str]:
@@ -61,14 +60,17 @@ class CertificateParser:
             san_ext = cert.extensions.get_extension_for_oid(
                 x509.oid.ExtensionOID.SUBJECT_ALTERNATIVE_NAME
             )
-            san_list = san_ext.value.get_values_for_type(x509.DNSName)
-            return list(san_list)
+            # san_ext.value is SubjectAlternativeName
+            san_value: x509.SubjectAlternativeName = san_ext.value  # type: ignore[assignment]
+            san_list = [str(name) for name in san_value.get_values_for_type(x509.DNSName)]
+            return san_list
         except x509.ExtensionNotFound:
             # No SAN extension, try Common Name
             try:
-                cn = cert.subject.get_attributes_for_oid(
+                cn_attrs = cert.subject.get_attributes_for_oid(
                     x509.oid.NameOID.COMMON_NAME
-                )[0].value
+                )
+                cn = str(cn_attrs[0].value)
                 return [cn]
             except (IndexError, KeyError):
                 return []

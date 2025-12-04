@@ -5,10 +5,9 @@ Implements IMPL-015: Rate limiter with token bucket algorithm.
 """
 
 import asyncio
+import logging
 import time
 from typing import Optional
-import logging
-
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +75,9 @@ class RateLimiter:
                 tokens_needed = tokens - self._tokens
                 wait_time = tokens_needed / self.rate
 
-                logger.debug(f"Rate limit reached, waiting {wait_time:.2f}s for {tokens_needed:.2f} token(s)")
+                logger.debug(
+                    f"Rate limit reached, waiting {wait_time:.2f}s for {tokens_needed:.2f} token(s)"
+                )
 
                 # Release lock while waiting
                 # We need to use a small sleep and then recheck to avoid race conditions
@@ -109,10 +110,14 @@ class RateLimiter:
             # Check if we have enough tokens
             if self._tokens >= tokens:
                 self._tokens -= tokens
-                logger.debug(f"Acquired {tokens} token(s) (non-blocking), {self._tokens:.2f} remaining")
+                logger.debug(
+                    f"Acquired {tokens} token(s) (non-blocking), {self._tokens:.2f} remaining"
+                )
                 return True
 
-            logger.debug(f"Failed to acquire {tokens} token(s) (non-blocking), only {self._tokens:.2f} available")
+            logger.debug(
+                f"Failed to acquire {tokens} token(s) (non-blocking), only {self._tokens:.2f} available"
+            )
             return False
 
     def get_available_tokens(self) -> float:

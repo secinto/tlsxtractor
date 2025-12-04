@@ -5,10 +5,10 @@ Implements IMPL-006: Basic console output
 """
 
 import sys
-import time
-from typing import Optional
-from dataclasses import dataclass
 import threading
+import time
+from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
@@ -77,7 +77,8 @@ class ConsoleOutput:
         self._last_progress_update = 0.0
         self._progress_update_interval = 1.0  # Update every 1 second
         self._progress_line_active = False
-        self._last_progress_line = ""  # Store last progress line for reprinting
+        # Store last progress line for reprinting
+        self._last_progress_line = ""
 
     @staticmethod
     def _supports_color() -> bool:
@@ -179,8 +180,13 @@ class ConsoleOutput:
             if self._progress_line_active:
                 print(f"\r{' ' * 120}\r", end="")
 
-            domain_list = ", ".join(csp_domains[:10])  # Limit to first 10 for display
-            count_msg = f" (+{len(csp_domains) - 10} more)" if len(csp_domains) > 10 else ""
+            # Limit to first 10 for display
+            domain_list = ", ".join(csp_domains[:10])
+            count_msg = (
+                f" (+{len(csp_domains) - 10} more)"
+                if len(csp_domains) > 10
+                else ""
+            )
             host_info = f" ({hostname})" if hostname else ""
             message = f"[{ip}:{port}]{host_info} CSP domains: {domain_list}{count_msg}"
             colored = self._colorize(message, "35")  # Magenta
@@ -188,7 +194,11 @@ class ConsoleOutput:
 
             # Reprint progress line
             if self._progress_line_active and self._last_progress_line:
-                print(f"\r{self._last_progress_line}", end="", flush=True)
+                print(
+                    f"\r{self._last_progress_line}",
+                    end="",
+                    flush=True
+                )
 
     def print_progress(self, stats: ScanStatistics, force: bool = False) -> None:
         """
@@ -203,7 +213,11 @@ class ConsoleOutput:
 
         # Rate limit progress updates
         current_time = time.time()
-        if not force and (current_time - self._last_progress_update) < self._progress_update_interval:
+        if (
+            not force
+            and (current_time - self._last_progress_update)
+            < self._progress_update_interval
+        ):
             return
 
         self._last_progress_update = current_time
@@ -215,7 +229,8 @@ class ConsoleOutput:
             eta = stats.eta_seconds
 
             progress_parts = [
-                f"Progress: {stats.scanned}/{stats.total_targets} ({percentage:.1f}%)",
+                f"Progress: {stats.scanned}/{stats.total_targets} "
+                f"({percentage:.1f}%)",
                 f"Rate: {rate:.1f} ips/s",
                 f"Success: {stats.successful}",
                 f"Failed: {stats.failed}",
@@ -266,7 +281,8 @@ class ConsoleOutput:
             print(f"Successful:         {stats.successful}")
             print(f"Failed:             {stats.failed}")
             print(f"Unique domains:     {stats.domains_found}")
-            print(f"Elapsed time:       {self._format_duration(stats.elapsed_time)}")
+            elapsed_str = self._format_duration(stats.elapsed_time)
+            print(f"Elapsed time:       {elapsed_str}")
             print(f"Average rate:       {stats.scan_rate:.2f} targets/sec")
 
             if stats.total_targets > 0:

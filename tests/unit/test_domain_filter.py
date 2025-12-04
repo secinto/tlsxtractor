@@ -2,8 +2,6 @@
 Unit tests for domain filtering module.
 """
 
-import pytest
-from pathlib import Path
 from tlsxtractor.domain_filter import DomainFilter
 
 
@@ -250,12 +248,7 @@ class TestFilterDomains:
         filter_obj = DomainFilter(use_defaults=False)
         filter_obj.add_exclusions(["*.cloudflare.com", "*.google.com"])
 
-        domains = [
-            "cdn.cloudflare.com",
-            "example.com",
-            "fonts.google.com",
-            "test.com"
-        ]
+        domains = ["cdn.cloudflare.com", "example.com", "fonts.google.com", "test.com"]
         result = filter_obj.filter_domains(domains)
 
         assert len(result) == 2
@@ -428,8 +421,7 @@ class TestFactoryMethods:
     def test_from_comma_separated_simple(self):
         """Test creating filter from comma-separated string."""
         filter_obj = DomainFilter.from_comma_separated(
-            "cdn.com,analytics.com,ads.com",
-            use_defaults=False
+            "cdn.com,analytics.com,ads.com", use_defaults=False
         )
 
         assert filter_obj.should_filter("cdn.com") is True
@@ -439,8 +431,7 @@ class TestFactoryMethods:
     def test_from_comma_separated_with_whitespace(self):
         """Test CSV parsing handles whitespace."""
         filter_obj = DomainFilter.from_comma_separated(
-            "cdn.com , analytics.com , ads.com",
-            use_defaults=False
+            "cdn.com , analytics.com , ads.com", use_defaults=False
         )
 
         assert filter_obj.should_filter("cdn.com") is True
@@ -450,8 +441,7 @@ class TestFactoryMethods:
     def test_from_comma_separated_with_wildcards(self):
         """Test CSV parsing with wildcard patterns."""
         filter_obj = DomainFilter.from_comma_separated(
-            "*.cloudflare.com,*.google.com",
-            use_defaults=False
+            "*.cloudflare.com,*.google.com", use_defaults=False
         )
 
         assert filter_obj.should_filter("cdn.cloudflare.com") is True

@@ -8,10 +8,10 @@ Supports different protocols that require specific handshakes before TLS:
 """
 
 import asyncio
+import logging
 import ssl
 from abc import ABC, abstractmethod
 from typing import Optional, Tuple
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ class SMTPSTARTTLSHandler(ProtocolHandler):
             )
 
             # Update writer with new transport
-            writer._transport = new_transport
+            writer._transport = new_transport  # type: ignore[attr-defined]
 
             return reader, writer
 
@@ -268,7 +268,7 @@ class IMAPSTARTTLSHandler(ProtocolHandler):
                 server_hostname=server_hostname,
             )
 
-            writer._transport = new_transport
+            writer._transport = new_transport  # type: ignore[attr-defined]
 
             return reader, writer
 
@@ -346,7 +346,7 @@ class POP3STARTTLSHandler(ProtocolHandler):
                 server_hostname=server_hostname,
             )
 
-            writer._transport = new_transport
+            writer._transport = new_transport  # type: ignore[attr-defined]
 
             return reader, writer
 
@@ -371,7 +371,6 @@ class ProtocolDetector:
         8443: ("HTTPS", DirectTLSHandler),
         993: ("IMAPS", DirectTLSHandler),  # IMAP over SSL
         995: ("POP3S", DirectTLSHandler),  # POP3 over SSL
-
         # STARTTLS
         25: ("SMTP", SMTPSTARTTLSHandler),  # SMTP with STARTTLS
         587: ("SMTP", SMTPSTARTTLSHandler),  # SMTP submission with STARTTLS
@@ -393,10 +392,12 @@ class ProtocolDetector:
         """
         if port in cls.PORT_PROTOCOLS:
             protocol_name, handler_class = cls.PORT_PROTOCOLS[port]
+            handler: ProtocolHandler
             if handler_class == DirectTLSHandler:
-                return DirectTLSHandler(protocol_name=protocol_name, timeout=timeout)
+                handler = DirectTLSHandler(protocol_name=protocol_name, timeout=timeout)
             else:
-                return handler_class(timeout=timeout)
+                handler = handler_class(timeout=timeout)
+            return handler
         else:
             # Default to direct TLS for unknown ports
             return DirectTLSHandler(protocol_name="TLS", timeout=timeout)

@@ -5,11 +5,10 @@ Provides configurable filtering of domains based on exact matches,
 wildcard patterns, and regex patterns.
 """
 
-import re
-from typing import List, Set, Optional, Union
-from pathlib import Path
 import logging
-
+import re
+from pathlib import Path
+from typing import List, Optional, Set, Union
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,6 @@ class DomainFilter:
         "*.cdn77.com",
         "cdninstagram.com",
         "*.cdninstagram.com",
-
         # Google Services
         "googleapis.com",
         "*.googleapis.com",
@@ -54,7 +52,6 @@ class DomainFilter:
         "*.gstatic.com",
         "google-analytics.com",
         "*.google-analytics.com",
-
         # Analytics & Tracking
         "doubleclick.net",
         "*.doubleclick.net",
@@ -70,7 +67,6 @@ class DomainFilter:
         "*.hotjar.com",
         "clarity.ms",
         "*.clarity.ms",
-
         # Advertising Networks
         "doubleclick.com",
         "*.doubleclick.com",
@@ -82,7 +78,6 @@ class DomainFilter:
         "*.adnxs.com",
         "adsrvr.org",
         "*.adsrvr.org",
-
         # Social Media CDNs
         "facebook.com",
         "*.facebook.com",
@@ -92,7 +87,6 @@ class DomainFilter:
         "*.twitter.com",
         "twimg.com",
         "*.twimg.com",
-
         # Other Common Services
         "jquery.com",
         "*.jquery.com",
@@ -406,7 +400,9 @@ class DomainFilter:
                 "exact_matches": len(self._exact_matches),
                 "wildcard_patterns": len(self._wildcard_patterns),
                 "regex_patterns": len(self._regex_patterns),
-                "total_patterns": len(self._exact_matches) + len(self._wildcard_patterns) + len(self._regex_patterns),
+                "total_patterns": len(self._exact_matches)
+                + len(self._wildcard_patterns)
+                + len(self._regex_patterns),
                 "filtered_count": self._filtered_count,
             }
         else:  # include mode
@@ -415,7 +411,9 @@ class DomainFilter:
                 "exact_matches": len(self._include_exact_matches),
                 "wildcard_patterns": len(self._include_wildcard_patterns),
                 "regex_patterns": len(self._include_regex_patterns),
-                "total_patterns": len(self._include_exact_matches) + len(self._include_wildcard_patterns) + len(self._include_regex_patterns),
+                "total_patterns": len(self._include_exact_matches)
+                + len(self._include_wildcard_patterns)
+                + len(self._include_regex_patterns),
                 "filtered_count": self._filtered_count,
             }
 

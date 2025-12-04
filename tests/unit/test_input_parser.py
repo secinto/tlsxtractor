@@ -3,7 +3,7 @@ Unit tests for input parser.
 """
 
 import pytest
-from pathlib import Path
+
 from tlsxtractor.input_parser import InputParser
 
 

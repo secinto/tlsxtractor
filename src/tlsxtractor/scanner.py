@@ -3,14 +3,18 @@ TLS connection and scanning functionality.
 """
 
 import asyncio
-import ssl
-import socket
-from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, field
 import logging
-
+import ssl
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Constants
+BACKOFF_BASE = 2  # Base for exponential backoff calculation
+DEFAULT_TIMEOUT = 5  # Default connection timeout in seconds
+DEFAULT_RETRY_COUNT = 3  # Default number of retry attempts
+DEFAULT_PORT = 443  # Default HTTPS port
 
 
 @dataclass
@@ -22,13 +26,13 @@ class ScanResult:
     status: str
     sni: Optional[str] = None
     certificate: Optional[Dict[str, Any]] = None
-    domains: List[str] = field(default_factory=list)  # Aggregate list for backward compatibility
-    domain_sources: Dict[str, List[str]] = field(default_factory=lambda: {
-        "sni": [],
-        "san": [],
-        "cn": [],
-        "csp": []
-    })
+    # Aggregate list for backward compatibility
+    domains: List[str] = field(default_factory=list)
+    domain_sources: Dict[str, List[str]] = field(
+        default_factory=lambda: {
+            "sni": [], "san": [], "cn": [], "csp": []
+        }
+    )
     error: Optional[str] = None
     tls_version: Optional[str] = None
 
@@ -44,9 +48,9 @@ class TLSScanner:
 
     def __init__(
         self,
-        timeout: int = 5,
-        retry_count: int = 3,
-        port: int = 443,
+        timeout: int = DEFAULT_TIMEOUT,
+        retry_count: int = DEFAULT_RETRY_COUNT,
+        port: int = DEFAULT_PORT,
         fetch_csp: bool = False,
     ):
         """
@@ -68,6 +72,7 @@ class TLSScanner:
         self._csp_extractor = None
         if self.fetch_csp:
             from .csp_extractor import CSPExtractor
+
             self._csp_extractor = CSPExtractor(timeout=timeout)
 
     def _create_ssl_context(self) -> ssl.SSLContext:
@@ -110,7 +115,10 @@ class TLSScanner:
                 result = await self._connect_and_scan(ip, target_port, sni)
                 return result
             except asyncio.TimeoutError:
-                logger.debug(f"Timeout connecting to {ip}:{target_port} (attempt {attempt + 1})")
+                logger.debug(
+                    f"Timeout connecting to {ip}:{target_port} "
+                    f"(attempt {attempt + 1})"
+                )
                 if attempt == self.retry_count:
                     return ScanResult(
                         ip=ip,
@@ -127,7 +135,9 @@ class TLSScanner:
                     error="Connection refused",
                 )
             except OSError as e:
-                logger.debug(f"Network error connecting to {ip}:{target_port}: {e}")
+                logger.debug(
+                    f"Network error connecting to {ip}:{target_port}: {e}"
+                )
                 if attempt == self.retry_count:
                     return ScanResult(
                         ip=ip,
@@ -136,7 +146,9 @@ class TLSScanner:
                         error=f"Network error: {str(e)}",
                     )
             except Exception as e:
-                logger.debug(f"Unexpected error scanning {ip}:{target_port}: {e}")
+                logger.debug(
+                    f"Unexpected error scanning {ip}:{target_port}: {e}"
+                )
                 return ScanResult(
                     ip=ip,
                     port=target_port,
@@ -146,7 +158,7 @@ class TLSScanner:
 
             # Exponential backoff between retries
             if attempt < self.retry_count:
-                await asyncio.sleep(2 ** attempt)
+                await asyncio.sleep(BACKOFF_BASE**attempt)
 
         # Should not reach here, but return error if it does
         return ScanResult(
@@ -230,12 +242,7 @@ class TLSScanner:
             cert_info = CertificateParser.parse_certificate(cert_der)
 
             # Extract domains from different sources
-            domain_sources = {
-                "sni": [],
-                "san": [],
-                "cn": [],
-                "csp": []
-            }
+            domain_sources: Dict[str, List[str]] = {"sni": [], "san": [], "cn": [], "csp": []}
 
             # Extract from SNI (if provided)
             if sni:
@@ -254,24 +261,37 @@ class TLSScanner:
             # Fetch CSP if enabled
             if self._csp_extractor and sni:
                 try:
-                    logger.debug(f"Fetching CSP from {ip}:{port} (SNI: {sni})")
-                    _, csp_domains = await self._csp_extractor.fetch_and_extract_domains(
-                        ip=ip,
-                        port=port,
-                        sni=sni,
-                        path="/"
+                    logger.debug(
+                        f"Fetching CSP from {ip}:{port} (SNI: {sni})"
                     )
+                    csp_result = (
+                        await self._csp_extractor
+                        .fetch_and_extract_domains(
+                            ip=ip, port=port, sni=sni, path="/"
+                        )
+                    )
+                    _, csp_domains = csp_result
                     if csp_domains:
                         domain_sources["csp"] = csp_domains
-                        logger.debug(f"Extracted {len(csp_domains)} domains from CSP")
+                        logger.debug(
+                            f"Extracted {len(csp_domains)} "
+                            f"domains from CSP"
+                        )
                 except Exception as e:
                     # CSP extraction failure should not break the scan
-                    logger.debug(f"CSP extraction failed for {ip}:{port}: {e}")
+                    logger.debug(
+                        f"CSP extraction failed for {ip}:{port}: {e}"
+                    )
 
             # Build aggregate domains list for backward compatibility
             # Deduplicate across all sources
             all_domains = set()
-            for source_domains in [domain_sources["sni"], domain_sources["san"], domain_sources["cn"], domain_sources["csp"]]:
+            for source_domains in [
+                domain_sources["sni"],
+                domain_sources["san"],
+                domain_sources["cn"],
+                domain_sources["csp"],
+            ]:
                 all_domains.update(source_domains)
             domains = list(all_domains)
 
@@ -286,12 +306,12 @@ class TLSScanner:
                 tls_version=tls_version,
             )
 
-        except Exception as e:
+        except Exception:
             # Ensure cleanup
             try:
                 writer.close()
                 await writer.wait_closed()
-            except:
+            except Exception:
                 pass
             raise
 
@@ -300,7 +320,7 @@ class TLSScanner:
         targets: List[tuple[str, Optional[int], Optional[str]]],
         concurrency: int = 10,
         rate_limit: Optional[float] = None,
-        progress_callback: Optional[callable] = None,
+        progress_callback: Optional[Callable[[ScanResult], Awaitable[None]]] = None,
     ) -> List[ScanResult]:
         """
         Scan multiple targets concurrently with optional rate limiting.
@@ -326,8 +346,10 @@ class TLSScanner:
                 if rate_limiter:
                     await rate_limiter.acquire()
 
-                ip, port, sni = target
-                result = await self.scan_target(ip, port, sni)
+                target_ip, target_port, target_sni = target
+                result = await self.scan_target(
+                    target_ip, target_port, target_sni
+                )
 
                 # Call progress callback if provided
                 if progress_callback:
@@ -342,7 +364,7 @@ class TLSScanner:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Convert exceptions to error results
-        processed_results = []
+        processed_results: List[ScanResult] = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 ip, port, _ = targets[i]
@@ -354,7 +376,7 @@ class TLSScanner:
                         error=f"Scan failed: {str(result)}",
                     )
                 )
-            else:
+            elif isinstance(result, ScanResult):
                 processed_results.append(result)
 
         return processed_results

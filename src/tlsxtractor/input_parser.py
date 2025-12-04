@@ -3,9 +3,12 @@ Input file parsing and IP range expansion.
 """
 
 import ipaddress
-from typing import List, Iterator, Optional, Literal
+import logging
 from pathlib import Path
+from typing import Iterator, List, Literal, Optional, Union
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 
 class InputParser:
@@ -48,7 +51,7 @@ class InputParser:
                     ipaddress.ip_address(line)
                     ips.append(line)
                 except ValueError:
-                    print(f"Warning: Invalid IP at line {line_num}: {line}")
+                    logger.warning(f"Invalid IP at line {line_num}: {line}")
 
         return ips
 
@@ -83,7 +86,7 @@ class InputParser:
         """
         from urllib.parse import urlparse
 
-        url_data = []
+        url_data: List[tuple[str, str, Optional[int]]] = []
         path = Path(file_path)
 
         if not path.exists():
@@ -147,7 +150,9 @@ class InputParser:
 
                 # Basic validation - hostname should not contain scheme
                 if line.startswith(("http://", "https://")):
-                    print(f"Warning: Line {line_num} looks like a URL, not a hostname. Use --url-file instead.")
+                    print(
+                        f"Warning: Line {line_num} looks like a URL, not a hostname. Use --url-file instead."
+                    )
                     continue
 
                 hostnames.append(line)
@@ -225,7 +230,9 @@ class InputParser:
 
             # Try parsing as URL with added scheme
             try:
-                test_url = f"https://{line}" if not line.startswith(("http://", "https://")) else line
+                test_url = (
+                    f"https://{line}" if not line.startswith(("http://", "https://")) else line
+                )
                 parsed = urlparse(test_url)
 
                 # If it has a path component beyond '/', it's likely a URL
@@ -319,7 +326,7 @@ class InputParser:
             raise FileNotFoundError(f"Input file not found: {file_path}")
 
         ip_list = []
-        url_data_list = []
+        url_data_list: List[tuple[str, str, Optional[int]]] = []
 
         with open(path, "r", encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
@@ -357,14 +364,20 @@ class InputParser:
 
                             url_data_list.append((original_line, parsed.hostname, port))
                         else:
-                            print(f"Warning: No hostname in URL at line {line_num}: {original_line}")
+                            print(
+                                f"Warning: No hostname in URL at line {line_num}: {original_line}"
+                            )
                     except Exception as e:
-                        print(f"Warning: Invalid URL/hostname at line {line_num}: {original_line} - {e}")
+                        print(
+                            f"Warning: Invalid URL/hostname at line {line_num}: {original_line} - {e}"
+                        )
 
         return ip_list, url_data_list
 
     @staticmethod
-    def parse_file(file_path: str, file_type: Optional[str] = None):
+    def parse_file(
+        file_path: str, file_type: Optional[str] = None
+    ) -> Union[List[str], List[tuple[str, str, Optional[int]]], tuple[List[str], List[tuple[str, str, Optional[int]]]]]:
         """
         Parse input file with automatic or specified type detection.
 

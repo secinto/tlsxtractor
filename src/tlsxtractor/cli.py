@@ -4,9 +4,14 @@ Command-line interface for TLSXtractor.
 
 import argparse
 import sys
-from typing import Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from . import __version__
+
+if TYPE_CHECKING:
+    from .console import ConsoleOutput
+    from .domain_filter import DomainFilter
+    from .scanner import ScanResult
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -32,14 +37,14 @@ Examples:
     )
 
     # Version
-    parser.add_argument(
-        "--version", action="version", version=f"%(prog)s {__version__}"
-    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     # Input options (mutually exclusive)
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument("--cidr", metavar="CIDR", help="Scan IP range in CIDR notation")
-    input_group.add_argument("--file", "-f", metavar="FILE", help="Input file (supports mixed IPs, URLs, and hostnames)")
+    input_group.add_argument(
+        "--file", "-f", metavar="FILE", help="Input file (supports mixed IPs, URLs, and hostnames)"
+    )
     input_group.add_argument("--url", "-u", metavar="URL", help="Single URL or hostname to scan")
 
     # Output options
@@ -199,6 +204,7 @@ def main() -> int:
 
     # Set up logging
     import logging
+
     from .console import ConsoleOutput
 
     log_level = getattr(logging, args.log_level.upper())
@@ -235,8 +241,9 @@ def create_domain_filter(args: argparse.Namespace) -> Optional["DomainFilter"]:
     Returns:
         DomainFilter instance or None if no filtering requested
     """
-    from .domain_filter import DomainFilter
     from pathlib import Path
+
+    from .domain_filter import DomainFilter
 
     # Handle include-domains (allowlist mode)
     if hasattr(args, 'include_domains') and args.include_domains:
@@ -259,7 +266,9 @@ def create_domain_filter(args: argparse.Namespace) -> Optional["DomainFilter"]:
             return DomainFilter.from_file(exclude_path, use_defaults=use_defaults)
         else:
             # Treat as comma-separated list
-            return DomainFilter.from_comma_separated(args.exclude_domains, use_defaults=use_defaults)
+            return DomainFilter.from_comma_separated(
+                args.exclude_domains, use_defaults=use_defaults
+            )
 
     # No explicit filtering specified
     if args.no_default_exclusions:
@@ -306,13 +315,14 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
     Returns:
         Exit code
     """
-    from .scanner import TLSScanner
-    from .input_parser import InputParser
-    from .dns_resolver import DNSResolver
-    from .output import OutputFormatter
-    from .console import ScanStatistics
-    import logging
     import asyncio
+    import logging
+
+    from .console import ScanStatistics
+    from .dns_resolver import DNSResolver
+    from .input_parser import InputParser
+    from .output import OutputFormatter
+    from .scanner import TLSScanner
 
     logger = logging.getLogger(__name__)
 
@@ -363,7 +373,7 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
     hostnames = [hostname for _, hostname, _ in url_hostnames]
 
     url_targets = []
-    url_results_map = {}
+    url_results_map: Dict[str, Dict[str, Any]] = {}
 
     if hostnames:
         console.info(f"Resolving {len(hostnames)} hostname(s)...")
@@ -419,7 +429,7 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
         # Create progress callback for real-time updates
         unique_domains = set()
 
-        async def progress_callback(result: "ScanResult"):
+        async def progress_callback(result: "ScanResult") -> None:
             stats.scanned += 1
 
             if result.status == "success":
@@ -444,11 +454,15 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                 logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
 
         # Perform scan with progress callback
+        # Cast to proper type for scan_multiple
+        scan_targets_list: List[Tuple[str, Optional[int], Optional[str]]] = [
+            (ip, port, sni) for ip, port, sni in all_targets
+        ]
         results = await scanner.scan_multiple(
-            all_targets,
+            scan_targets_list,
             concurrency=args.threads,
             rate_limit=args.rate_limit,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
         )
 
         # Cancel progress task
@@ -472,34 +486,38 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
     # Export results in mixed mode format
     try:
         domain_filter = create_domain_filter(args)
-        output_formatter = OutputFormatter(args.output, mode="mixed_scan", domain_filter=domain_filter)
+        output_formatter = OutputFormatter(
+            args.output, mode="mixed_scan", domain_filter=domain_filter
+        )
 
         # Separate IP results and URL results
         ip_results = [r for r in results if r.sni is None]
         url_results = []
 
         for url, data in url_results_map.items():
-            url_results.append({
-                "url": url,
-                "hostname": data["hostname"],
-                "port": data["port"],
-                "dns_status": data["dns_result"].status,
-                "resolved_ips": data["dns_result"].ips,
-                "connections": [
-                    {
-                        "ip": r.ip,
-                        "port": r.port,
-                        "status": r.status,
-                        "sni": r.sni,
-                        "domains": r.domains,
-                        "domain_sources": r.domain_sources,
-                        "tls_version": r.tls_version,
-                        "error": r.error,
-                        "certificate": r.certificate,
-                    }
-                    for r in data["scan_results"]
-                ],
-            })
+            url_results.append(
+                {
+                    "url": url,
+                    "hostname": data["hostname"],
+                    "port": data["port"],
+                    "dns_status": data["dns_result"].status,
+                    "resolved_ips": data["dns_result"].ips,
+                    "connections": [
+                        {
+                            "ip": r.ip,
+                            "port": r.port,
+                            "status": r.status,
+                            "sni": r.sni,
+                            "domains": r.domains,
+                            "domain_sources": r.domain_sources,
+                            "tls_version": r.tls_version,
+                            "error": r.error,
+                            "certificate": r.certificate,
+                        }
+                        for r in data["scan_results"]
+                    ],
+                }
+            )
 
         # Collect input hostnames for comparison
         input_hostnames = set(hostnames)
@@ -576,11 +594,12 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
     Returns:
         Exit code
     """
-    from .scanner import TLSScanner
+    import logging
+
+    from .console import ScanStatistics
     from .input_parser import InputParser
     from .output import OutputFormatter
-    from .console import ScanStatistics
-    import logging
+    from .scanner import TLSScanner
 
     logger = logging.getLogger(__name__)
 
@@ -653,7 +672,7 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
         progress_task = asyncio.create_task(update_progress())
 
         # Create progress callback for real-time updates
-        async def progress_callback(result: "ScanResult"):
+        async def progress_callback(result: "ScanResult") -> None:
             results.append(result)
             stats.scanned += 1
 
@@ -673,11 +692,15 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
                 logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
 
         # Scan all targets with rate limiting and progress callback
-        scan_results = await scanner.scan_multiple(
-            scan_targets,
+        # Type annotation already correct for scan_targets
+        scan_targets_typed: List[Tuple[str, Optional[int], Optional[str]]] = [
+            (ip, port, sni) for ip, port, sni in scan_targets
+        ]
+        await scanner.scan_multiple(
+            scan_targets_typed,
             concurrency=args.threads,
             rate_limit=args.rate_limit,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
         )
 
         # Cancel progress task
@@ -1004,13 +1027,14 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
     Returns:
         Exit code
     """
-    from .scanner import TLSScanner
-    from .input_parser import InputParser
-    from .dns_resolver import DNSResolver
-    from .output import OutputFormatter
-    from .console import ScanStatistics
-    import logging
     import asyncio
+    import logging
+
+    from .console import ScanStatistics
+    from .dns_resolver import DNSResolver
+    from .input_parser import InputParser
+    from .output import OutputFormatter
+    from .scanner import TLSScanner
 
     logger = logging.getLogger(__name__)
 
@@ -1056,7 +1080,7 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
     console.info(f"DNS resolution: {dns_success}/{len(hostnames)} successful")
 
     # Prepare scan targets: map each URL to its resolved IPs
-    url_to_targets = {}
+    url_to_targets: Dict[str, Dict[str, Any]] = {}
     total_scan_targets = 0
 
     for original_url, hostname, port in url_data:
@@ -1131,15 +1155,22 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
         target_to_url = {}  # Map (ip, port) to original_url
 
         for original_url, data in url_to_targets.items():
-            hostname = data["hostname"]
-            port = data["port"]
-            for ip in data["resolved_ips"]:
-                all_scan_targets.append((ip, port, hostname))  # Use hostname as SNI
-                target_to_url[(ip, port)] = original_url
+            url_hostname: str = str(data["hostname"])
+            url_port: Optional[int] = data["port"] if isinstance(data["port"], int) else None
+            resolved_ips = data["resolved_ips"]
+            if isinstance(resolved_ips, list):
+                for ip in resolved_ips:
+                    if isinstance(ip, str):
+                        all_scan_targets.append((ip, url_port, url_hostname))  # Use hostname as SNI
+                        target_to_url[(ip, url_port)] = original_url
 
         # Scan all targets with rate limiting
+        # Cast to proper type
+        all_scan_targets_typed: List[Tuple[str, Optional[int], Optional[str]]] = [
+            (str(ip), port, hostname) for ip, port, hostname in all_scan_targets
+        ]
         scan_results = await scanner.scan_multiple(
-            all_scan_targets, concurrency=args.threads, rate_limit=args.rate_limit
+            all_scan_targets_typed, concurrency=args.threads, rate_limit=args.rate_limit
         )
 
         # Map results back to URLs
@@ -1147,9 +1178,11 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
             stats.scanned += 1
 
             # Find which URL this result belongs to
-            original_url = target_to_url.get((result.ip, result.port))
-            if original_url:
-                url_to_targets[original_url]["scan_results"].append(result)
+            result_url: Optional[str] = target_to_url.get((result.ip, result.port))
+            if result_url and result_url in url_to_targets:
+                scan_results_list = url_to_targets[result_url].get("scan_results")
+                if isinstance(scan_results_list, list):
+                    scan_results_list.append(result)
 
             if result.status == "success":
                 stats.successful += 1
@@ -1186,7 +1219,9 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
     # Export results in URL scan format
     try:
         domain_filter = create_domain_filter(args)
-        output_formatter = OutputFormatter(args.output, mode="url_scan", domain_filter=domain_filter)
+        output_formatter = OutputFormatter(
+            args.output, mode="url_scan", domain_filter=domain_filter
+        )
 
         # Build results in URL scan format
         results_list = []
@@ -1209,7 +1244,7 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
                         "error": r.error,
                         "certificate": r.certificate,
                     }
-                    for r in data["scan_results"]
+                    for r in (data["scan_results"] if isinstance(data["scan_results"], list) else [])
                 ],
             }
 

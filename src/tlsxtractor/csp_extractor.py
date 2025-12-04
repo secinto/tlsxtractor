@@ -6,11 +6,10 @@ from various CSP directives.
 """
 
 import asyncio
-import ssl
-from typing import List, Dict, Set, Optional, Tuple
-from urllib.parse import urlparse
 import logging
-
+import ssl
+from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +82,7 @@ class CSPExtractor:
         return context
 
     async def fetch_csp(
-        self,
-        ip: str,
-        port: int = 443,
-        sni: Optional[str] = None,
-        path: str = "/"
+        self, ip: str, port: int = 443, sni: Optional[str] = None, path: str = "/"
     ) -> Optional[str]:
         """
         Fetch Content-Security-Policy header from HTTPS endpoint.
@@ -138,7 +133,10 @@ class CSPExtractor:
             # Look for CSP header (case-insensitive)
             csp_value = None
             for header_name, header_value in headers.items():
-                if header_name.lower() in ("content-security-policy", "content-security-policy-report-only"):
+                if header_name.lower() in (
+                    "content-security-policy",
+                    "content-security-policy-report-only",
+                ):
                     csp_value = header_value
                     logger.debug(f"Found CSP header on {ip}:{port}: {csp_value[:100]}...")
                     break
@@ -162,23 +160,17 @@ class CSPExtractor:
         Returns:
             Dictionary of header name -> value
         """
-        headers = {}
+        headers: Dict[str, str] = {}
 
         # Read status line
         try:
-            status_line = await asyncio.wait_for(
-                reader.readline(),
-                timeout=self.timeout
-            )
+            status_line = await asyncio.wait_for(reader.readline(), timeout=self.timeout)
             if not status_line:
                 return headers
 
             # Read headers until blank line
             while True:
-                line = await asyncio.wait_for(
-                    reader.readline(),
-                    timeout=self.timeout
-                )
+                line = await asyncio.wait_for(reader.readline(), timeout=self.timeout)
 
                 if not line or line == b"\r\n" or line == b"\n":
                     break
@@ -352,11 +344,7 @@ class CSPExtractor:
         return host_part.strip()
 
     async def fetch_and_extract_domains(
-        self,
-        ip: str,
-        port: int = 443,
-        sni: Optional[str] = None,
-        path: str = "/"
+        self, ip: str, port: int = 443, sni: Optional[str] = None, path: str = "/"
     ) -> Tuple[Optional[str], List[str]]:
         """
         Fetch CSP header and extract domains in one call.

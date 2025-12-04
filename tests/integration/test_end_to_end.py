@@ -4,16 +4,15 @@ Integration tests for end-to-end TLSXtractor functionality.
 These tests verify the complete scanning workflow with real network calls.
 """
 
-import pytest
-import asyncio
 import json
 import time
-from pathlib import Path
-from tlsxtractor.scanner import TLSScanner
+
+import pytest
+
 from tlsxtractor.dns_resolver import DNSResolver
 from tlsxtractor.input_parser import InputParser
 from tlsxtractor.output import OutputFormatter
-from tlsxtractor.rate_limiter import RateLimiter
+from tlsxtractor.scanner import TLSScanner
 
 
 @pytest.mark.asyncio
@@ -123,7 +122,7 @@ async def test_rate_limiting_enforcement():
     results = await scanner.scan_multiple(
         targets,
         concurrency=10,  # High concurrency shouldn't bypass rate limit
-        rate_limit=rate_limit
+        rate_limit=rate_limit,
     )
 
     elapsed = time.monotonic() - start_time
