@@ -304,6 +304,11 @@ class HostnameAnalyzer:
             for hostname in regular_hostnames:
                 if hostname not in input_normalized:
                     new_hostnames.add(hostname)
+                    # Also extract root domain from new subdomain and add to new_tlds
+                    # if it's not already in input TLDs
+                    root = HostnameAnalyzer.extract_registrable_domain(hostname)
+                    if root and root not in input_tlds:
+                        new_tlds.add(root)
 
             # Find new TLDs (not derived from input hostnames)
             for tld in registrable_domains:
