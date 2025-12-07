@@ -8,7 +8,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union
 
-import tldextract
+# Lazy import for tldextract - will be loaded on first use
+_tldextract = None
+
+
+def _get_extractor():
+    """Get or create the cached tldextract instance."""
+    global _tldextract
+    if _tldextract is None:
+        import tldextract
+        # Use cached extractor with in-memory cache to avoid PSL reload
+        _tldextract = tldextract.TLDExtract(cache_dir=None, include_psl_private_domains=False)
+    return _tldextract
+
 
 if TYPE_CHECKING:
     from .domain_filter import DomainFilter
@@ -22,13 +34,29 @@ class HostnameAnalyzer:
     Uses Mozilla's Public Suffix List via tldextract.
     """
 
+    # Pre-compiled hostname validation pattern
+    _HOSTNAME_PATTERN = re.compile(
+        r"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
+    )
+
+    # Cache for tldextract results to avoid redundant extractions
+    _extract_cache: Dict[str, Any] = {}
+
+    @classmethod
+    def _get_extraction(cls, hostname: str):
+        """Get cached tldextract extraction result."""
+        if hostname not in cls._extract_cache:
+            extractor = _get_extractor()
+            cls._extract_cache[hostname] = extractor(hostname)
+        return cls._extract_cache[hostname]
+
     @staticmethod
     def is_wildcard(hostname: str) -> bool:
         """Check if hostname contains wildcard."""
         return "*" in hostname
 
-    @staticmethod
-    def extract_registrable_domain(hostname: str) -> Optional[str]:
+    @classmethod
+    def extract_registrable_domain(cls, hostname: str) -> Optional[str]:
         """
         Extract the registrable domain (eTLD+1) from a hostname.
 
@@ -48,7 +76,7 @@ class HostnameAnalyzer:
             return None
 
         try:
-            ext = tldextract.extract(hostname)
+            ext = cls._get_extraction(hostname)
             # top_domain_under_public_suffix is the eTLD+1 (e.g., example.com, example.co.uk)
             if ext.top_domain_under_public_suffix:
                 return ext.top_domain_under_public_suffix
@@ -57,8 +85,8 @@ class HostnameAnalyzer:
 
         return None
 
-    @staticmethod
-    def is_registrable_domain(hostname: str) -> bool:
+    @classmethod
+    def is_registrable_domain(cls, hostname: str) -> bool:
         """
         Check if hostname is the registrable domain itself (not a subdomain).
 
@@ -78,14 +106,14 @@ class HostnameAnalyzer:
             return False
 
         try:
-            ext = tldextract.extract(hostname)
+            ext = cls._get_extraction(hostname)
             # Check if there's no subdomain and we have a valid domain
             return bool(not ext.subdomain and ext.domain and ext.suffix)
         except Exception:
             return False
 
-    @staticmethod
-    def is_valid_hostname(hostname: str) -> bool:
+    @classmethod
+    def is_valid_hostname(cls, hostname: str) -> bool:
         """Validate hostname format."""
         if not hostname:
             return False
@@ -99,9 +127,8 @@ class HostnameAnalyzer:
         if hostname.startswith(".") or hostname.endswith("."):
             return False
 
-        # Basic pattern check (alphanumeric, hyphens, dots)
-        pattern = r"^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$"
-        return bool(re.match(pattern, hostname))
+        # Use pre-compiled pattern for efficiency
+        return bool(cls._HOSTNAME_PATTERN.match(hostname))
 
     @staticmethod
     def analyze_results(
@@ -136,6 +163,11 @@ class HostnameAnalyzer:
         wildcards: Set[str] = set()
         filtered_count = 0
 
+        # Track domains by source for breakdown
+        domains_from_san: Set[str] = set()
+        domains_from_cn: Set[str] = set()
+        domains_from_csp: Set[str] = set()
+
         # Helper function to extract from a single result
         def extract_from_result(result: Optional[Dict[str, Any]]) -> None:
             # Skip if result is None or not a dict
@@ -146,22 +178,37 @@ class HostnameAnalyzer:
             if result.get("sni"):
                 all_hostnames.add(result["sni"])
 
-            # Extract from domains list
+            # Extract from domain_sources if available (preferred)
+            domain_sources = result.get("domain_sources", {})
+            if domain_sources:
+                for san in domain_sources.get("san", []):
+                    all_hostnames.add(san)
+                    domains_from_san.add(san.lower())
+                for cn in domain_sources.get("cn", []):
+                    all_hostnames.add(cn)
+                    domains_from_cn.add(cn.lower())
+                for csp in domain_sources.get("csp", []):
+                    all_hostnames.add(csp)
+                    domains_from_csp.add(csp.lower())
+
+            # Extract from domains list (fallback)
             if result.get("domains"):
                 for domain in result["domains"]:
                     all_hostnames.add(domain)
 
-            # Extract from certificate SAN
+            # Extract from certificate SAN (fallback if no domain_sources)
             certificate = result.get("certificate")
-            if certificate and certificate.get("san"):
+            if certificate and certificate.get("san") and not domain_sources:
                 for san in certificate["san"]:
                     all_hostnames.add(san)
+                    domains_from_san.add(san.lower())
 
-            # Extract from certificate CN
-            if certificate and certificate.get("subject"):
+            # Extract from certificate CN (fallback if no domain_sources)
+            if certificate and certificate.get("subject") and not domain_sources:
                 cert_cn = certificate["subject"].get("commonName")
                 if cert_cn:
                     all_hostnames.add(cert_cn)
+                    domains_from_cn.add(cert_cn.lower())
 
         # Handle different result formats
         if isinstance(results, dict):
@@ -273,6 +320,11 @@ class HostnameAnalyzer:
             "new_tlds": sorted(list(new_tlds)),
             "total_new_hostnames": len(new_hostnames),
             "total_new_tlds": len(new_tlds),
+            "source_breakdown": {
+                "san": len(domains_from_san),
+                "cn": len(domains_from_cn),
+                "csp": len(domains_from_csp),
+            },
         }
 
         # Add filtered count if filtering was applied

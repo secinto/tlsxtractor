@@ -178,6 +178,9 @@ class DomainFilter:
         """
         Add inclusion patterns to the filter.
 
+        For plain domains without wildcards, also add *.domain pattern
+        to automatically include subdomains.
+
         Args:
             patterns: List of domain patterns (exact, wildcard, or regex)
         """

@@ -15,6 +15,7 @@ BACKOFF_BASE = 2  # Base for exponential backoff calculation
 DEFAULT_TIMEOUT = 5  # Default connection timeout in seconds
 DEFAULT_RETRY_COUNT = 3  # Default number of retry attempts
 DEFAULT_PORT = 443  # Default HTTPS port
+SSL_SHUTDOWN_TIMEOUT = 2  # Timeout for SSL shutdown (some servers hang)
 
 
 @dataclass
@@ -52,6 +53,9 @@ class TLSScanner:
         retry_count: int = DEFAULT_RETRY_COUNT,
         port: int = DEFAULT_PORT,
         fetch_csp: bool = False,
+        follow_redirects: bool = False,
+        follow_host_redirects: bool = False,
+        max_redirects: int = 10,
     ):
         """
         Initialize TLS scanner.
@@ -61,6 +65,9 @@ class TLSScanner:
             retry_count: Maximum number of retry attempts
             port: Default target port
             fetch_csp: Whether to fetch and parse CSP headers
+            follow_redirects: Follow all HTTP redirects when fetching CSP
+            follow_host_redirects: Follow redirects only to same host
+            max_redirects: Maximum number of redirects to follow
         """
         self.timeout = timeout
         self.retry_count = retry_count
@@ -73,7 +80,12 @@ class TLSScanner:
         if self.fetch_csp:
             from .csp_extractor import CSPExtractor
 
-            self._csp_extractor = CSPExtractor(timeout=timeout)
+            self._csp_extractor = CSPExtractor(
+                timeout=timeout,
+                follow_redirects=follow_redirects,
+                follow_host_redirects=follow_host_redirects,
+                max_redirects=max_redirects,
+            )
 
     def _create_ssl_context(self) -> ssl.SSLContext:
         """
@@ -89,6 +101,30 @@ class TLSScanner:
         # Support TLS 1.2 and 1.3
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         return context
+
+    @staticmethod
+    async def _safe_close_writer(writer: asyncio.StreamWriter) -> None:
+        """
+        Safely close a StreamWriter with timeout for SSL shutdown.
+
+        Some servers (e.g., stripe.com) hang during SSL shutdown,
+        so we use a timeout to avoid blocking indefinitely.
+
+        Args:
+            writer: The StreamWriter to close
+        """
+        writer.close()
+        try:
+            await asyncio.wait_for(
+                writer.wait_closed(),
+                timeout=SSL_SHUTDOWN_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            # SSL shutdown timed out, but connection is closed
+            logger.debug("SSL shutdown timed out, continuing")
+        except Exception:
+            # Ignore other errors during cleanup
+            pass
 
     async def scan_target(
         self,
@@ -214,17 +250,15 @@ class TLSScanner:
             ssl_object = writer.get_extra_info("ssl_object")
 
             if ssl_object is None:
-                writer.close()
-                await writer.wait_closed()
+                await self._safe_close_writer(writer)
                 raise OSError("Failed to establish TLS connection")
 
             # Extract certificate in DER format
             cert_der = ssl_object.getpeercert(binary_form=True)
             tls_version = ssl_object.version()
 
-            # Close connection
-            writer.close()
-            await writer.wait_closed()
+            # Close connection safely (some servers hang during SSL shutdown)
+            await self._safe_close_writer(writer)
 
             if cert_der is None:
                 return ScanResult(
@@ -308,11 +342,7 @@ class TLSScanner:
 
         except Exception:
             # Ensure cleanup
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:
-                pass
+            await self._safe_close_writer(writer)
             raise
 
     async def scan_multiple(

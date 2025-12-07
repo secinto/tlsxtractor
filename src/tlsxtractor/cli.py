@@ -131,6 +131,25 @@ Examples:
         action="store_true",
         help="Fetch and parse Content-Security-Policy headers for additional domains",
     )
+    parser.add_argument(
+        "--follow-redirects",
+        "-fr",
+        action="store_true",
+        help="Follow HTTP redirects when fetching CSP headers",
+    )
+    parser.add_argument(
+        "--follow-host-redirects",
+        "-fhr",
+        action="store_true",
+        help="Follow redirects only to the same host when fetching CSP headers",
+    )
+    parser.add_argument(
+        "--max-redirects",
+        "-maxr",
+        type=int,
+        default=10,
+        help="Maximum number of redirects to follow (default: 10)",
+    )
 
     # Domain filtering group (mutually exclusive)
     filter_group = parser.add_mutually_exclusive_group()
@@ -350,6 +369,9 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
         retry_count=args.retry,
         port=args.port,
         fetch_csp=args.fetch_csp,
+        follow_redirects=args.follow_redirects,
+        follow_host_redirects=args.follow_host_redirects,
+        max_redirects=args.max_redirects,
     )
     dns_resolver = DNSResolver(timeout=args.timeout)
 
@@ -438,11 +460,16 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                     for domain in result.domains:
                         unique_domains.add(domain)
                     stats.domains_found = len(unique_domains)
-                    console.print_domain_found(result.ip, result.port, result.domains, result.sni)
 
-                # Print CSP domains separately if found
-                if result.domain_sources.get("csp"):
-                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"], result.sni)
+                    # Track domain sources for statistics
+                    stats.domains_from_san += len(result.domain_sources.get("san", []))
+                    stats.domains_from_cn += len(result.domain_sources.get("cn", []))
+                    stats.domains_from_csp += len(result.domain_sources.get("csp", []))
+
+                    # Print with source breakdown
+                    console.print_domain_found_with_sources(
+                        result.ip, result.port, result.domain_sources, result.sni
+                    )
 
                 # Map back to URLs if applicable
                 if result.sni:  # This was a URL/hostname target
@@ -639,6 +666,9 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
         retry_count=args.retry,
         port=args.port,
         fetch_csp=args.fetch_csp,
+        follow_redirects=args.follow_redirects,
+        follow_host_redirects=args.follow_host_redirects,
+        max_redirects=args.max_redirects,
     )
 
     # Initialize statistics
@@ -682,11 +712,16 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
                     for domain in result.domains:
                         unique_domains.add(domain)
                     stats.domains_found = len(unique_domains)
-                    console.print_domain_found(result.ip, result.port, result.domains, result.sni)
 
-                # Print CSP domains separately if found
-                if result.domain_sources.get("csp"):
-                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"], result.sni)
+                    # Track domain sources for statistics
+                    stats.domains_from_san += len(result.domain_sources.get("san", []))
+                    stats.domains_from_cn += len(result.domain_sources.get("cn", []))
+                    stats.domains_from_csp += len(result.domain_sources.get("csp", []))
+
+                    # Print with source breakdown
+                    console.print_domain_found_with_sources(
+                        result.ip, result.port, result.domain_sources, result.sni
+                    )
             else:
                 stats.failed += 1
                 logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
@@ -839,6 +874,9 @@ async def run_single_url_scan(args: argparse.Namespace, console: "ConsoleOutput"
         retry_count=args.retry,
         port=port,
         fetch_csp=args.fetch_csp,
+        follow_redirects=args.follow_redirects,
+        follow_host_redirects=args.follow_host_redirects,
+        max_redirects=args.max_redirects,
     )
     dns_resolver = DNSResolver(timeout=args.timeout)
 
@@ -907,11 +945,16 @@ async def run_single_url_scan(args: argparse.Namespace, console: "ConsoleOutput"
                     for domain in result.domains:
                         unique_domains.add(domain)
                     stats.domains_found = len(unique_domains)
-                    console.print_domain_found(result.ip, result.port, result.domains, result.sni)
 
-                # Print CSP domains separately if found
-                if result.domain_sources.get("csp"):
-                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"], result.sni)
+                    # Track domain sources for statistics
+                    stats.domains_from_san += len(result.domain_sources.get("san", []))
+                    stats.domains_from_cn += len(result.domain_sources.get("cn", []))
+                    stats.domains_from_csp += len(result.domain_sources.get("csp", []))
+
+                    # Print with source breakdown
+                    console.print_domain_found_with_sources(
+                        result.ip, result.port, result.domain_sources, result.sni
+                    )
             else:
                 stats.failed += 1
                 logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
@@ -1128,6 +1171,9 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
         retry_count=args.retry,
         port=args.port,
         fetch_csp=args.fetch_csp,
+        follow_redirects=args.follow_redirects,
+        follow_host_redirects=args.follow_host_redirects,
+        max_redirects=args.max_redirects,
     )
 
     # Initialize statistics
@@ -1189,11 +1235,16 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
                 if result.domains:
                     for domain in result.domains:
                         unique_domains.add(domain)
-                    console.print_domain_found(result.ip, result.port, result.domains, result.sni)
 
-                # Print CSP domains separately if found
-                if result.domain_sources.get("csp"):
-                    console.print_csp_domains(result.ip, result.port, result.domain_sources["csp"], result.sni)
+                    # Track domain sources for statistics
+                    stats.domains_from_san += len(result.domain_sources.get("san", []))
+                    stats.domains_from_cn += len(result.domain_sources.get("cn", []))
+                    stats.domains_from_csp += len(result.domain_sources.get("csp", []))
+
+                    # Print with source breakdown
+                    console.print_domain_found_with_sources(
+                        result.ip, result.port, result.domain_sources, result.sni
+                    )
             else:
                 stats.failed += 1
                 logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")

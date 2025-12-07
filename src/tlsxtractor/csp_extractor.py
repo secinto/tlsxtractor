@@ -13,6 +13,9 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
+# Timeout for SSL shutdown (some servers hang)
+SSL_SHUTDOWN_TIMEOUT = 2
+
 
 class CSPExtractor:
     """
@@ -56,16 +59,32 @@ class CSPExtractor:
         "about:",
     }
 
-    def __init__(self, timeout: int = 5, user_agent: str = "TLSXtractor/1.0"):
+    # HTTP redirect status codes
+    REDIRECT_CODES = {301, 302, 303, 307, 308}
+
+    def __init__(
+        self,
+        timeout: int = 5,
+        user_agent: str = "TLSXtractor/1.0",
+        follow_redirects: bool = False,
+        follow_host_redirects: bool = False,
+        max_redirects: int = 10,
+    ):
         """
         Initialize CSP extractor.
 
         Args:
             timeout: Request timeout in seconds
             user_agent: User-Agent header to send
+            follow_redirects: Follow all HTTP redirects
+            follow_host_redirects: Follow redirects only to same host
+            max_redirects: Maximum number of redirects to follow
         """
         self.timeout = timeout
         self.user_agent = user_agent
+        self.follow_redirects = follow_redirects
+        self.follow_host_redirects = follow_host_redirects
+        self.max_redirects = max_redirects
         self._ssl_context = self._create_ssl_context()
 
     def _create_ssl_context(self) -> ssl.SSLContext:
@@ -81,37 +100,146 @@ class CSPExtractor:
         context.verify_mode = ssl.CERT_NONE
         return context
 
-    async def fetch_csp(
-        self, ip: str, port: int = 443, sni: Optional[str] = None, path: str = "/"
-    ) -> Optional[str]:
+    @staticmethod
+    async def _safe_close_writer(writer: asyncio.StreamWriter) -> None:
         """
-        Fetch Content-Security-Policy header from HTTPS endpoint.
+        Safely close a StreamWriter with timeout for SSL shutdown.
+
+        Some servers (e.g., stripe.com) hang during SSL shutdown,
+        so we use a timeout to avoid blocking indefinitely.
 
         Args:
-            ip: Target IP address
-            port: Target port (default 443)
-            sni: Server Name Indication hostname
-            path: HTTP path to request (default /)
+            writer: The StreamWriter to close
+        """
+        writer.close()
+        try:
+            await asyncio.wait_for(
+                writer.wait_closed(),
+                timeout=SSL_SHUTDOWN_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            # SSL shutdown timed out, but connection is closed
+            logger.debug("SSL shutdown timed out, continuing")
+        except Exception:
+            # Ignore other errors during cleanup
+            pass
+
+    def _parse_redirect_location(
+        self, location: str, current_host: str, current_port: int
+    ) -> Optional[Tuple[str, int, str]]:
+        """
+        Parse redirect Location header.
+
+        Args:
+            location: The Location header value
+            current_host: Current hostname
+            current_port: Current port
 
         Returns:
-            CSP header value or None if not found/error
+            Tuple of (host, port, path) or None if invalid
         """
-        # Determine hostname for HTTP request
-        hostname = sni if sni else ip
+        if not location:
+            return None
 
+        # Handle relative URLs (e.g., "/new-path")
+        if location.startswith("/"):
+            return (current_host, current_port, location)
+
+        # Handle absolute URLs
+        try:
+            parsed = urlparse(location)
+
+            # Get scheme - default to https
+            scheme = parsed.scheme.lower() if parsed.scheme else "https"
+            if scheme not in ("http", "https"):
+                return None
+
+            # Get host
+            host = parsed.hostname
+            if not host:
+                return None
+
+            # Get port - default based on scheme
+            if parsed.port:
+                port = parsed.port
+            else:
+                port = 443 if scheme == "https" else 80
+
+            # Get path
+            path = parsed.path or "/"
+            if parsed.query:
+                path = f"{path}?{parsed.query}"
+
+            return (host, port, path)
+
+        except Exception:
+            return None
+
+    def _extract_csp_from_headers(self, headers: Dict[str, str]) -> Optional[str]:
+        """
+        Extract CSP header value from headers dict.
+
+        Args:
+            headers: Dictionary of header name -> value
+
+        Returns:
+            CSP header value or None
+        """
+        for header_name, header_value in headers.items():
+            if header_name.lower() in (
+                "content-security-policy",
+                "content-security-policy-report-only",
+            ):
+                return header_value
+        return None
+
+    def _extract_status_code(self, status_line: bytes) -> int:
+        """
+        Extract HTTP status code from status line.
+
+        Args:
+            status_line: Raw HTTP status line
+
+        Returns:
+            Status code as int, or 0 if parse fails
+        """
+        try:
+            # e.g., "HTTP/1.1 301 Moved Permanently"
+            parts = status_line.decode("utf-8", errors="ignore").split()
+            if len(parts) >= 2:
+                return int(parts[1])
+        except (ValueError, IndexError):
+            pass
+        return 0
+
+    async def _fetch_headers_with_status(
+        self, host: str, port: int, hostname: str, path: str
+    ) -> Tuple[int, Dict[str, str]]:
+        """
+        Fetch HTTP headers from endpoint with status code.
+
+        Args:
+            host: Target IP/host to connect to
+            port: Target port
+            hostname: Hostname for Host header and SNI
+            path: HTTP path to request
+
+        Returns:
+            Tuple of (status_code, headers_dict)
+        """
         try:
             # Open SSL connection
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(
-                    ip,
+                    host,
                     port,
                     ssl=self._ssl_context,
-                    server_hostname=sni if sni else None,
+                    server_hostname=hostname,
                 ),
                 timeout=self.timeout,
             )
 
-            # Send HTTP HEAD request (faster than GET, only needs headers)
+            # Send HTTP HEAD request
             request = (
                 f"HEAD {path} HTTP/1.1\r\n"
                 f"Host: {hostname}\r\n"
@@ -123,32 +251,140 @@ class CSPExtractor:
             writer.write(request.encode())
             await writer.drain()
 
-            # Read response headers
-            headers = await self._read_http_headers(reader)
+            # Read status line
+            status_line = await asyncio.wait_for(
+                reader.readline(), timeout=self.timeout
+            )
+            status_code = self._extract_status_code(status_line)
+
+            # Read headers
+            headers: Dict[str, str] = {}
+            while True:
+                line = await asyncio.wait_for(
+                    reader.readline(), timeout=self.timeout
+                )
+                if not line or line == b"\r\n" or line == b"\n":
+                    break
+                line_str = line.decode("utf-8", errors="ignore").strip()
+                if ":" in line_str:
+                    name, value = line_str.split(":", 1)
+                    headers[name.strip()] = value.strip()
 
             # Close connection
-            writer.close()
-            await writer.wait_closed()
+            await self._safe_close_writer(writer)
 
-            # Look for CSP header (case-insensitive)
-            csp_value = None
-            for header_name, header_value in headers.items():
-                if header_name.lower() in (
-                    "content-security-policy",
-                    "content-security-policy-report-only",
-                ):
-                    csp_value = header_value
-                    logger.debug(f"Found CSP header on {ip}:{port}: {csp_value[:100]}...")
-                    break
-
-            return csp_value
+            return (status_code, headers)
 
         except asyncio.TimeoutError:
-            logger.debug(f"Timeout fetching CSP from {ip}:{port}")
-            return None
+            logger.debug(f"Timeout fetching headers from {host}:{port}")
+            return (0, {})
         except Exception as e:
-            logger.debug(f"Error fetching CSP from {ip}:{port}: {e}")
-            return None
+            logger.debug(f"Error fetching headers from {host}:{port}: {e}")
+            return (0, {})
+
+    async def fetch_csp(
+        self, ip: str, port: int = 443, sni: Optional[str] = None, path: str = "/"
+    ) -> Optional[str]:
+        """
+        Fetch Content-Security-Policy header from HTTPS endpoint.
+
+        Supports following redirects if enabled.
+
+        Args:
+            ip: Target IP address
+            port: Target port (default 443)
+            sni: Server Name Indication hostname
+            path: HTTP path to request (default /)
+
+        Returns:
+            CSP header value or None if not found/error
+        """
+        # Current connection target
+        current_host = ip
+        current_hostname = sni if sni else ip
+        current_port = port
+        current_path = path
+        original_hostname = current_hostname
+        redirect_count = 0
+        visited_urls: Set[str] = set()
+
+        while redirect_count <= self.max_redirects:
+            # Build URL key for loop detection
+            url_key = f"{current_hostname}:{current_port}{current_path}"
+            if url_key in visited_urls:
+                logger.debug(f"Redirect loop detected: {url_key}")
+                break
+            visited_urls.add(url_key)
+
+            # Fetch headers with status code
+            status_code, headers = await self._fetch_headers_with_status(
+                current_host, current_port, current_hostname, current_path
+            )
+
+            if status_code == 0:
+                # Connection failed
+                break
+
+            # Check for CSP in response
+            csp_value = self._extract_csp_from_headers(headers)
+            if csp_value:
+                logger.debug(
+                    f"Found CSP header on {current_hostname}:{current_port}: "
+                    f"{csp_value[:100]}..."
+                )
+                return csp_value
+
+            # Check for redirect
+            if status_code in self.REDIRECT_CODES:
+                location = headers.get("Location") or headers.get("location")
+                if not location:
+                    logger.debug(f"Redirect {status_code} but no Location header")
+                    break
+
+                # Check redirect policy
+                if not self.follow_redirects and not self.follow_host_redirects:
+                    logger.debug(
+                        f"Redirect to {location} ignored (redirect following disabled)"
+                    )
+                    break
+
+                # Parse redirect target
+                redirect_info = self._parse_redirect_location(
+                    location, current_hostname, current_port
+                )
+                if not redirect_info:
+                    logger.debug(f"Failed to parse redirect location: {location}")
+                    break
+
+                new_host, new_port, new_path = redirect_info
+
+                # Check same-host restriction
+                if self.follow_host_redirects and not self.follow_redirects:
+                    if new_host.lower() != original_hostname.lower():
+                        logger.debug(
+                            f"Blocked cross-host redirect: "
+                            f"{current_hostname} -> {new_host}"
+                        )
+                        break
+
+                # Update for next iteration
+                # For redirects, we connect to the new host and use it for SNI
+                current_host = new_host
+                current_hostname = new_host
+                current_port = new_port
+                current_path = new_path
+                redirect_count += 1
+
+                logger.debug(
+                    f"Following redirect {redirect_count}/{self.max_redirects}: "
+                    f"{location}"
+                )
+                continue
+
+            # No redirect, no CSP found
+            break
+
+        return None
 
     async def _read_http_headers(self, reader: asyncio.StreamReader) -> Dict[str, str]:
         """

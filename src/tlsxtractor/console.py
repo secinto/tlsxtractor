@@ -7,8 +7,8 @@ Implements IMPL-006: Basic console output
 import sys
 import threading
 import time
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -21,6 +21,10 @@ class ScanStatistics:
     failed: int = 0
     domains_found: int = 0
     start_time: float = 0.0
+    # Domain source breakdown
+    domains_from_san: int = 0
+    domains_from_cn: int = 0
+    domains_from_csp: int = 0
 
     def __post_init__(self):
         if self.start_time == 0.0:
@@ -200,6 +204,68 @@ class ConsoleOutput:
                     flush=True
                 )
 
+    def print_domain_found_with_sources(
+        self,
+        ip: str,
+        port: int,
+        domain_sources: Dict[str, List[str]],
+        hostname: Optional[str] = None
+    ) -> None:
+        """
+        Print discovered domains with source breakdown showing actual domains.
+
+        Args:
+            ip: Source IP address
+            port: Source port
+            domain_sources: Dict with keys 'sni', 'san', 'cn', 'csp' mapping to domain lists
+            hostname: Optional hostname/SNI that was scanned
+        """
+        if self.quiet:
+            return
+
+        san_domains = domain_sources.get("san", [])
+        cn_domains = domain_sources.get("cn", [])
+        csp_domains = domain_sources.get("csp", [])
+
+        # Skip if no domains found from any source
+        total = len(san_domains) + len(cn_domains) + len(csp_domains)
+        if total == 0:
+            return
+
+        with self._lock:
+            # Clear progress line if active
+            if self._progress_line_active:
+                print(f"\r{' ' * 120}\r", end="")
+
+            host_info = f" ({hostname})" if hostname else ""
+            header = f"[{ip}:{port}]{host_info} Found {total} domain(s):"
+            colored_header = self._colorize(header, "36")  # Cyan
+            print(colored_header)
+
+            # Print SAN domains
+            if san_domains:
+                san_list = ", ".join(san_domains[:10])
+                more = f" (+{len(san_domains) - 10} more)" if len(san_domains) > 10 else ""
+                san_line = f"  [SAN] {san_list}{more}"
+                print(self._colorize(san_line, "32"))  # Green
+
+            # Print CN domains
+            if cn_domains:
+                cn_list = ", ".join(cn_domains)
+                cn_line = f"  [CN]  {cn_list}"
+                print(self._colorize(cn_line, "33"))  # Yellow
+
+            # Print CSP domains
+            if csp_domains:
+                csp_list = ", ".join(csp_domains[:10])
+                more = f" (+{len(csp_domains) - 10} more)" if len(csp_domains) > 10 else ""
+                csp_line = f"  [CSP] {csp_list}{more}"
+                print(self._colorize(csp_line, "35"))  # Magenta
+
+            # Reprint progress line
+            if self._progress_line_active and self._last_progress_line:
+                print(f"\r{self._last_progress_line}", end="", flush=True)
+
     def print_progress(self, stats: ScanStatistics, force: bool = False) -> None:
         """
         Print scan progress.
@@ -281,6 +347,13 @@ class ConsoleOutput:
             print(f"Successful:         {stats.successful}")
             print(f"Failed:             {stats.failed}")
             print(f"Unique domains:     {stats.domains_found}")
+
+            # Show domain source breakdown if any sources have counts
+            if stats.domains_from_san > 0 or stats.domains_from_cn > 0 or stats.domains_from_csp > 0:
+                print(f"  - From SAN:       {stats.domains_from_san}")
+                print(f"  - From CN:        {stats.domains_from_cn}")
+                print(f"  - From CSP:       {stats.domains_from_csp}")
+
             elapsed_str = self._format_duration(stats.elapsed_time)
             print(f"Elapsed time:       {elapsed_str}")
             print(f"Average rate:       {stats.scan_rate:.2f} targets/sec")
