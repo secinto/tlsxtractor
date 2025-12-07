@@ -261,6 +261,16 @@ class HostnameAnalyzer:
             # Check for wildcard
             if HostnameAnalyzer.is_wildcard(hostname):
                 wildcards.add(hostname)
+                # Extract root domain from wildcard (e.g., *.example.com -> example.com)
+                stripped = hostname.lstrip("*.")
+                if stripped:
+                    # Apply domain filter to the stripped hostname
+                    if domain_filter and domain_filter.should_filter(stripped):
+                        filtered_count += 1
+                    else:
+                        registrable = HostnameAnalyzer.extract_registrable_domain(stripped)
+                        if registrable:
+                            registrable_domains.add(registrable.lower())
                 continue
 
             # Validate hostname format
