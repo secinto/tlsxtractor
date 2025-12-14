@@ -18,7 +18,7 @@ echo "$URL" > "$TEMP_FILE"
 
 # Run tlsxtractor with typical settings
 python -m tlsxtractor \
-    --url-file "$TEMP_FILE" \
+    --file "$TEMP_FILE" \
     --fetch-csp \
     --threads 10 \
     --rate-limit 10 \
