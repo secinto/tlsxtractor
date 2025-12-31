@@ -26,9 +26,36 @@ class ScanStatistics:
     domains_from_cn: int = 0
     domains_from_csp: int = 0
 
+    # Error breakdown tracking
+    error_counts: Dict[str, int] = field(default_factory=dict)  # error_code -> count
+    category_counts: Dict[str, int] = field(default_factory=dict)  # category -> count
+    retry_success_counts: Dict[int, int] = field(default_factory=dict)  # attempt -> count
+
     def __post_init__(self):
         if self.start_time == 0.0:
             self.start_time = time.time()
+
+    def record_error(self, error_code: Optional[str], error_category: Optional[str]) -> None:
+        """
+        Record an error occurrence for statistics.
+
+        Args:
+            error_code: The specific error code (e.g., "CONN_TIMEOUT")
+            error_category: The error category (e.g., "timeout")
+        """
+        if error_code:
+            self.error_counts[error_code] = self.error_counts.get(error_code, 0) + 1
+        if error_category:
+            self.category_counts[error_category] = self.category_counts.get(error_category, 0) + 1
+
+    def record_retry_success(self, attempt: int) -> None:
+        """
+        Record a successful scan that required retries.
+
+        Args:
+            attempt: The attempt number that succeeded (1-indexed)
+        """
+        self.retry_success_counts[attempt] = self.retry_success_counts.get(attempt, 0) + 1
 
     @property
     def elapsed_time(self) -> float:
@@ -354,8 +381,29 @@ class ConsoleOutput:
                 print(f"  - From CN:        {stats.domains_from_cn}")
                 print(f"  - From CSP:       {stats.domains_from_csp}")
 
+            # Show error breakdown if there are failures
+            if stats.failed > 0 and stats.category_counts:
+                print("\nError Breakdown:")
+                for category, count in sorted(stats.category_counts.items(), key=lambda x: -x[1]):
+                    percentage = (count / stats.failed * 100) if stats.failed > 0 else 0
+                    print(f"  - {category}: {count} ({percentage:.1f}%)")
+
+            # Show detailed error codes (top 5)
+            if stats.failed > 0 and stats.error_counts:
+                print("\nTop Error Codes:")
+                top_errors = sorted(stats.error_counts.items(), key=lambda x: -x[1])[:5]
+                for code, count in top_errors:
+                    percentage = (count / stats.failed * 100) if stats.failed > 0 else 0
+                    print(f"  - {code}: {count} ({percentage:.1f}%)")
+
+            # Show retry success distribution
+            if stats.retry_success_counts:
+                print("\nRetry Success Distribution:")
+                for attempt, count in sorted(stats.retry_success_counts.items()):
+                    print(f"  - Attempt {attempt}: {count}")
+
             elapsed_str = self._format_duration(stats.elapsed_time)
-            print(f"Elapsed time:       {elapsed_str}")
+            print(f"\nElapsed time:       {elapsed_str}")
             print(f"Average rate:       {stats.scan_rate:.2f} targets/sec")
 
             if stats.total_targets > 0:

@@ -58,6 +58,7 @@ output/
 results/
 *.json.bak
 scan_results*.json
+results.json
 
 # Logs
 *.log

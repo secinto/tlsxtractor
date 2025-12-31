@@ -9,7 +9,7 @@ import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Tuple
 
 import aiodns
 
@@ -143,12 +143,14 @@ class DNSResolver:
         self._cache_hits = 0
         self._cache_misses = 0
 
-    async def resolve_hostname(self, hostname: str) -> DNSResult:
+    async def resolve_hostname(self, hostname: str, ipv6: bool = False) -> DNSResult:
         """
         Resolve a hostname to IP addresses.
 
         Args:
             hostname: Hostname to resolve
+            ipv6: If True, query both A (IPv4) and AAAA (IPv6) records.
+                  If False (default), only query A records (IPv4 only).
 
         Returns:
             DNSResult with resolved IPs or error
@@ -189,26 +191,27 @@ class DNSResolver:
             except asyncio.TimeoutError:
                 logger.debug(f"DNS A query timeout for {hostname}")
 
-            # Query AAAA records (IPv6)
-            try:
-                aaaa_records = await asyncio.wait_for(
-                    self._resolver.query(hostname, "AAAA"),
-                    timeout=self.timeout,
-                )
-                aaaa_record: Any
-                for aaaa_record in aaaa_records:
-                    ips.add(aaaa_record.host)
-                logger.debug(
-                    f"Resolved {hostname} AAAA records: "
-                    f"{len(aaaa_records)}"
-                )
-            except aiodns.error.DNSError as e:
-                if e.args[0] == aiodns.error.ARES_ENOTFOUND:
-                    pass
-                else:
-                    logger.debug(f"DNS AAAA query error for {hostname}: {e}")
-            except asyncio.TimeoutError:
-                logger.debug(f"DNS AAAA query timeout for {hostname}")
+            # Query AAAA records (IPv6) - only if ipv6 flag is enabled
+            if ipv6:
+                try:
+                    aaaa_records = await asyncio.wait_for(
+                        self._resolver.query(hostname, "AAAA"),
+                        timeout=self.timeout,
+                    )
+                    aaaa_record: Any
+                    for aaaa_record in aaaa_records:
+                        ips.add(aaaa_record.host)
+                    logger.debug(
+                        f"Resolved {hostname} AAAA records: "
+                        f"{len(aaaa_records)}"
+                    )
+                except aiodns.error.DNSError as e:
+                    if e.args[0] == aiodns.error.ARES_ENOTFOUND:
+                        pass
+                    else:
+                        logger.debug(f"DNS AAAA query error for {hostname}: {e}")
+                except asyncio.TimeoutError:
+                    logger.debug(f"DNS AAAA query timeout for {hostname}")
 
             if not ips:
                 # No records found
@@ -247,14 +250,16 @@ class DNSResolver:
         return result
 
     async def resolve_multiple(
-        self, hostnames: List[str], concurrency: int = 10
+        self, hostnames: List[str], concurrency: int = 50, ipv6: bool = False
     ) -> Dict[str, DNSResult]:
         """
         Resolve multiple hostnames concurrently.
 
         Args:
             hostnames: List of hostnames to resolve
-            concurrency: Maximum concurrent resolutions
+            concurrency: Maximum concurrent resolutions (default: 50)
+            ipv6: If True, query both A (IPv4) and AAAA (IPv6) records.
+                  If False (default), only query A records (IPv4 only).
 
         Returns:
             Dictionary mapping hostname to DNSResult
@@ -263,7 +268,7 @@ class DNSResolver:
 
         async def resolve_with_semaphore(hostname: str) -> Tuple[str, DNSResult]:
             async with semaphore:
-                return hostname, await self.resolve_hostname(hostname)
+                return hostname, await self.resolve_hostname(hostname, ipv6=ipv6)
 
         tasks = [resolve_with_semaphore(hostname) for hostname in hostnames]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -341,3 +346,53 @@ class DNSResolver:
             "misses": self._cache_misses,
             "hit_rate": f"{hit_rate * 100:.2f}%",
         }
+
+    async def resolve_streaming(
+        self, hostnames: List[str], concurrency: int = 50, ipv6: bool = False
+    ) -> AsyncGenerator[Tuple[str, DNSResult], None]:
+        """
+        Resolve multiple hostnames concurrently, yielding results as they complete.
+
+        This enables pipeline parallelism where downstream consumers can start
+        processing results before all DNS resolutions are complete.
+
+        Args:
+            hostnames: List of hostnames to resolve
+            concurrency: Maximum concurrent resolutions (default: 50)
+            ipv6: If True, query both A (IPv4) and AAAA (IPv6) records.
+                  If False (default), only query A records (IPv4 only).
+
+        Yields:
+            Tuples of (hostname, DNSResult) as each resolution completes
+        """
+        semaphore = asyncio.Semaphore(concurrency)
+        pending_tasks: Dict[asyncio.Task, str] = {}
+
+        async def resolve_with_semaphore(hostname: str) -> Tuple[str, DNSResult]:
+            async with semaphore:
+                return hostname, await self.resolve_hostname(hostname, ipv6=ipv6)
+
+        # Queue all tasks
+        for hostname in hostnames:
+            task = asyncio.create_task(resolve_with_semaphore(hostname))
+            pending_tasks[task] = hostname
+
+        # Yield results as they complete
+        while pending_tasks:
+            done, _ = await asyncio.wait(
+                pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in done:
+                hostname = pending_tasks.pop(task)
+                try:
+                    result = task.result()
+                    if isinstance(result, tuple) and len(result) == 2:
+                        yield result
+                except Exception as e:
+                    logger.error(f"DNS resolution exception for {hostname}: {e}")
+                    yield hostname, DNSResult(
+                        hostname=hostname,
+                        ips=[],
+                        status="error",
+                        error=str(e)
+                    )

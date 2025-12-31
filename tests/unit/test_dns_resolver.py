@@ -62,7 +62,7 @@ async def test_dns_caching():
 
     # Verify cache stats
     stats = resolver.get_cache_stats()
-    assert stats["cached_entries"] >= 1
+    assert stats["size"] >= 1
 
 
 @pytest.mark.asyncio
@@ -88,11 +88,11 @@ async def test_clear_cache():
 
     # Add some entries to cache
     await resolver.resolve_hostname("google.com")
-    assert resolver.get_cache_stats()["cached_entries"] > 0
+    assert resolver.get_cache_stats()["size"] > 0
 
     # Clear cache
     resolver.clear_cache()
-    assert resolver.get_cache_stats()["cached_entries"] == 0
+    assert resolver.get_cache_stats()["size"] == 0
 
 
 @pytest.mark.asyncio

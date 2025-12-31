@@ -6,7 +6,7 @@ import asyncio
 import logging
 import ssl
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, AsyncGenerator, Awaitable, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,13 @@ class ScanResult:
     )
     error: Optional[str] = None
     tls_version: Optional[str] = None
+
+    # Enhanced failure diagnostics
+    error_code: Optional[str] = None  # e.g., "CONN_TIMEOUT", "TLS_HANDSHAKE_FAILED"
+    error_category: Optional[str] = None  # e.g., "timeout", "tls", "network"
+    error_details: Optional[Dict[str, Any]] = None  # SSL lib, errno, etc.
+    retry_count: int = 0  # Number of retry attempts made
+    successful_attempt: Optional[int] = None  # Which attempt succeeded (1-indexed)
 
 
 class TLSScanner:
@@ -98,8 +105,10 @@ class TLSScanner:
         # Disable certificate verification for scanning purposes
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
-        # Support TLS 1.2 and 1.3
-        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        # Allow all TLS/SSL versions for maximum compatibility when scanning
+        # This enables connecting to legacy servers with TLS 1.0/1.1
+        context.minimum_version = ssl.TLSVersion.MINIMUM_SUPPORTED
+        context.maximum_version = ssl.TLSVersion.MAXIMUM_SUPPORTED
         return context
 
     @staticmethod
@@ -143,12 +152,22 @@ class TLSScanner:
         Returns:
             ScanResult containing discovered information
         """
+        from .errors import (
+            ErrorCategory,
+            ErrorCode,
+            TLSScanError,
+            classify_os_error,
+        )
+
         target_port = port or self.port
 
         # Attempt connection with retries
         for attempt in range(self.retry_count + 1):
             try:
                 result = await self._connect_and_scan(ip, target_port, sni)
+                # Record successful attempt info
+                result.retry_count = attempt
+                result.successful_attempt = attempt + 1
                 return result
             except asyncio.TimeoutError:
                 logger.debug(
@@ -161,6 +180,10 @@ class TLSScanner:
                         port=target_port,
                         status="timeout",
                         error="Connection timeout",
+                        error_code=ErrorCode.CONN_TIMEOUT.value,
+                        error_category=ErrorCategory.TIMEOUT.value,
+                        error_details={"attempts": attempt + 1},
+                        retry_count=attempt,
                     )
             except ConnectionRefusedError:
                 logger.debug(f"Connection refused by {ip}:{target_port}")
@@ -169,17 +192,42 @@ class TLSScanner:
                     port=target_port,
                     status="refused",
                     error="Connection refused",
+                    error_code=ErrorCode.CONN_REFUSED.value,
+                    error_category=ErrorCategory.REFUSED.value,
+                    error_details={"attempt": attempt + 1},
+                    retry_count=attempt,
                 )
-            except OSError as e:
+            except TLSScanError as e:
+                # Custom TLS error with classification
                 logger.debug(
-                    f"Network error connecting to {ip}:{target_port}: {e}"
+                    f"TLS error connecting to {ip}:{target_port}: {e}"
                 )
                 if attempt == self.retry_count:
                     return ScanResult(
                         ip=ip,
                         port=target_port,
+                        status="tls_error",
+                        error=str(e),
+                        error_code=e.error_code.value,
+                        error_category=e.error_category.value,
+                        error_details=e.error_details,
+                        retry_count=attempt,
+                    )
+            except OSError as e:
+                logger.debug(
+                    f"Network error connecting to {ip}:{target_port}: {e}"
+                )
+                if attempt == self.retry_count:
+                    error_code, error_category, error_details = classify_os_error(e)
+                    return ScanResult(
+                        ip=ip,
+                        port=target_port,
                         status="error",
                         error=f"Network error: {str(e)}",
+                        error_code=error_code.value,
+                        error_category=error_category.value,
+                        error_details=error_details,
+                        retry_count=attempt,
                     )
             except Exception as e:
                 logger.debug(
@@ -190,6 +238,13 @@ class TLSScanner:
                     port=target_port,
                     status="error",
                     error=f"Error: {str(e)}",
+                    error_code=ErrorCode.UNKNOWN_ERROR.value,
+                    error_category=ErrorCategory.UNKNOWN.value,
+                    error_details={
+                        "exception_type": type(e).__name__,
+                        "raw_message": str(e),
+                    },
+                    retry_count=attempt,
                 )
 
             # Exponential backoff between retries
@@ -202,6 +257,10 @@ class TLSScanner:
             port=target_port,
             status="error",
             error="Max retries exceeded",
+            error_code=ErrorCode.MAX_RETRIES.value,
+            error_category=ErrorCategory.UNKNOWN.value,
+            error_details={"max_retries": self.retry_count},
+            retry_count=self.retry_count,
         )
 
     async def _connect_and_scan(
@@ -221,6 +280,8 @@ class TLSScanner:
         Returns:
             ScanResult with certificate information
         """
+        from .errors import TLSScanError, classify_ssl_error
+
         # If SNI is provided, use it; otherwise None (no SNI)
         server_hostname = sni if sni else None
 
@@ -241,9 +302,19 @@ class TLSScanner:
             raise
         except ssl.SSLError as e:
             logger.debug(f"SSL error connecting to {ip}:{port}: {e}")
-            raise OSError(f"SSL error: {e}")
+            error_code, error_category, error_details = classify_ssl_error(e)
+            raise TLSScanError(
+                message=str(e),
+                error_code=error_code,
+                error_category=error_category,
+                error_details=error_details,
+            )
+        except OSError as e:
+            # Re-raise OSError directly to preserve errno
+            raise
         except Exception as e:
-            raise OSError(f"Failed to connect: {e}")
+            # Wrap other exceptions preserving as much info as possible
+            raise OSError(f"Failed to connect: {e}") from e
 
         try:
             # Get SSL object from transport
@@ -348,7 +419,7 @@ class TLSScanner:
     async def scan_multiple(
         self,
         targets: List[tuple[str, Optional[int], Optional[str]]],
-        concurrency: int = 10,
+        concurrency: int = 50,
         rate_limit: Optional[float] = None,
         progress_callback: Optional[Callable[[ScanResult], Awaitable[None]]] = None,
     ) -> List[ScanResult]:
@@ -357,8 +428,8 @@ class TLSScanner:
 
         Args:
             targets: List of (ip, port, sni) tuples
-            concurrency: Maximum number of concurrent scans
-            rate_limit: Optional rate limit in requests per second
+            concurrency: Maximum number of concurrent scans (default: 50)
+            rate_limit: Optional rate limit in requests per second (None = unlimited)
             progress_callback: Optional callback function called after each scan completes
                              with signature: callback(result: ScanResult)
 
@@ -410,3 +481,79 @@ class TLSScanner:
                 processed_results.append(result)
 
         return processed_results
+
+    async def scan_streaming(
+        self,
+        target_generator: "AsyncGenerator[tuple[str, Optional[int], Optional[str]], None]",
+        concurrency: int = 50,
+        rate_limit: Optional[float] = None,
+        progress_callback: Optional[Callable[[ScanResult], Awaitable[None]]] = None,
+    ) -> List[ScanResult]:
+        """
+        Scan targets from an async generator, enabling pipeline parallelism.
+
+        This method allows DNS resolution and scanning to happen concurrently
+        by accepting targets as they become available from an async generator.
+
+        Args:
+            target_generator: Async generator yielding (ip, port, sni) tuples
+            concurrency: Maximum number of concurrent scans (default: 50)
+            rate_limit: Optional rate limit in requests per second (None = unlimited)
+            progress_callback: Optional callback called after each scan completes
+
+        Returns:
+            List of scan results
+        """
+        from .rate_limiter import RateLimiter
+
+        semaphore = asyncio.Semaphore(concurrency)
+        rate_limiter = RateLimiter(rate_limit) if rate_limit else None
+        results: List[ScanResult] = []
+        pending_tasks: set = set()
+
+        async def scan_with_semaphore(target: tuple[str, Optional[int], Optional[str]]) -> ScanResult:
+            async with semaphore:
+                if rate_limiter:
+                    await rate_limiter.acquire()
+
+                target_ip, target_port, target_sni = target
+                result = await self.scan_target(target_ip, target_port, target_sni)
+
+                if progress_callback:
+                    try:
+                        await progress_callback(result)
+                    except Exception as e:
+                        logger.warning(f"Progress callback error: {e}")
+
+                return result
+
+        # Process targets as they arrive from the generator
+        async for target in target_generator:
+            task = asyncio.create_task(scan_with_semaphore(target))
+            pending_tasks.add(task)
+            task.add_done_callback(pending_tasks.discard)
+
+            # Limit pending tasks to prevent memory buildup
+            if len(pending_tasks) >= concurrency * 2:
+                done, pending_tasks_set = await asyncio.wait(
+                    pending_tasks, return_when=asyncio.FIRST_COMPLETED
+                )
+                pending_tasks = pending_tasks_set
+                for done_task in done:
+                    try:
+                        result = done_task.result()
+                        if isinstance(result, ScanResult):
+                            results.append(result)
+                    except Exception as e:
+                        logger.warning(f"Scan task error: {e}")
+
+        # Wait for remaining tasks
+        if pending_tasks:
+            done_tasks = await asyncio.gather(*pending_tasks, return_exceptions=True)
+            for result in done_tasks:
+                if isinstance(result, ScanResult):
+                    results.append(result)
+                elif isinstance(result, Exception):
+                    logger.warning(f"Scan task exception: {result}")
+
+        return results

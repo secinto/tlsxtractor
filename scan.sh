@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# TLSXtractor scan script with typical defaults
+# TLSXtractor scan script with optimized defaults
 # Usage: ./scan.sh <input_file>
 
 if [ $# -eq 0 ]; then
@@ -12,12 +12,14 @@ fi
 INPUT_FILE="$1"
 OUTPUT_FILE="results.json"
 
-# Run tlsxtractor with typical settings
+# Run tlsxtractor with optimized settings
+# - threads: 50 concurrent connections (up from 10)
+# - rate-limit: 0 = unlimited (was 10 req/s)
 python -m tlsxtractor \
     --file "$INPUT_FILE" \
     --fetch-csp \
-    --threads 10 \
-    --rate-limit 10 \
+    --threads 50 \
+    --rate-limit 0 \
     --timeout 5 \
     --retry 3 \
     --port 443 \

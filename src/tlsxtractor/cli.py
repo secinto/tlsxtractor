@@ -4,12 +4,13 @@ Command-line interface for TLSXtractor.
 
 import argparse
 import sys
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 from . import __version__
 
 if TYPE_CHECKING:
     from .console import ConsoleOutput
+    from .dns_resolver import DNSResolver
     from .domain_filter import DomainFilter
     from .scanner import ScanResult
 
@@ -66,16 +67,16 @@ Examples:
     parser.add_argument(
         "--threads",
         type=int,
-        default=10,
+        default=50,
         metavar="NUM",
-        help="Number of concurrent threads (default: 10)",
+        help="Number of concurrent threads (default: 50)",
     )
     parser.add_argument(
         "--rate-limit",
         type=float,
-        default=10.0,
+        default=0,
         metavar="NUM",
-        help="Requests per second (default: 10)",
+        help="Requests per second limit (default: 0 = unlimited)",
     )
     parser.add_argument(
         "--timeout",
@@ -104,6 +105,16 @@ Examples:
         "--allow-private",
         action="store_true",
         help="Allow scanning private IP ranges",
+    )
+    parser.add_argument(
+        "--ipv6",
+        action="store_true",
+        help="Include IPv6 addresses in scans (default: IPv4 only)",
+    )
+    parser.add_argument(
+        "--pipeline",
+        action="store_true",
+        help="Enable pipeline mode: start scanning as DNS resolves (faster for large lists)",
     )
 
     # Logging options
@@ -190,9 +201,9 @@ def validate_args(args: argparse.Namespace) -> Optional[str]:
     if args.threads > 1000:
         return f"Thread count {args.threads} is very high. Consider using <= 100."
 
-    # Validate rate limit
-    if args.rate_limit <= 0:
-        return f"Invalid rate limit: {args.rate_limit}. Must be positive."
+    # Validate rate limit (0 = unlimited, negative = invalid)
+    if args.rate_limit < 0:
+        return f"Invalid rate limit: {args.rate_limit}. Must be non-negative (0 = unlimited)."
 
     # Validate timeout
     if args.timeout < 1:
@@ -298,6 +309,49 @@ def create_domain_filter(args: argparse.Namespace) -> Optional["DomainFilter"]:
         return DomainFilter(use_defaults=True)
 
 
+async def create_dns_scan_pipeline(
+    dns_resolver: "DNSResolver",
+    url_data_list: List[Tuple[str, str, int]],
+    concurrency: int = 50,
+    ipv6: bool = False,
+) -> "AsyncGenerator[Tuple[str, Optional[int], Optional[str]], None]":
+    """
+    Create an async generator that yields scan targets as DNS resolves.
+
+    This enables pipeline parallelism where scanning begins immediately
+    as DNS results become available, rather than waiting for all DNS
+    resolutions to complete.
+
+    Args:
+        dns_resolver: DNS resolver instance
+        url_data_list: List of (original_url, hostname, port) tuples
+        concurrency: DNS resolution concurrency
+        ipv6: If True, include IPv6 addresses. If False (default), IPv4 only.
+
+    Yields:
+        (ip, port, sni) tuples ready for scanning
+    """
+    from typing import AsyncGenerator
+
+    # Build hostname to data mapping
+    hostname_data: Dict[str, List[Tuple[str, int]]] = {}
+    for original_url, hostname, port in url_data_list:
+        if hostname not in hostname_data:
+            hostname_data[hostname] = []
+        hostname_data[hostname].append((original_url, port))
+
+    hostnames = list(hostname_data.keys())
+
+    # Stream DNS results and yield scan targets
+    async for hostname, dns_result in dns_resolver.resolve_streaming(
+        hostnames, concurrency=concurrency, ipv6=ipv6
+    ):
+        if dns_result.status == "success" and dns_result.ips:
+            for original_url, port in hostname_data[hostname]:
+                for ip in dns_result.ips:
+                    yield (ip, port, hostname)
+
+
 async def run_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int:
     """
     Execute the scanning operation.
@@ -399,7 +453,7 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
 
     if hostnames:
         console.info(f"Resolving {len(hostnames)} hostname(s)...")
-        dns_map = await dns_resolver.resolve_multiple(hostnames, concurrency=args.threads)
+        dns_map = await dns_resolver.resolve_multiple(hostnames, concurrency=args.threads, ipv6=args.ipv6)
 
         # Build URL scan targets
         for original_url, hostname, port in url_hostnames:
@@ -456,6 +510,10 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
 
             if result.status == "success":
                 stats.successful += 1
+                # Track retry success if it took multiple attempts
+                if result.successful_attempt and result.successful_attempt > 1:
+                    stats.record_retry_success(result.successful_attempt)
+
                 if result.domains:
                     for domain in result.domains:
                         unique_domains.add(domain)
@@ -478,7 +536,11 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                             data["scan_results"].append(result)
             else:
                 stats.failed += 1
-                logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
+                stats.record_error(result.error_code, result.error_category)
+                logger.debug(
+                    f"Failed to scan {result.ip}:{result.port}: "
+                    f"[{result.error_code}] {result.error}"
+                )
 
         # Perform scan with progress callback
         # Cast to proper type for scan_multiple
@@ -539,6 +601,11 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                             "domain_sources": r.domain_sources,
                             "tls_version": r.tls_version,
                             "error": r.error,
+                            "error_code": r.error_code,
+                            "error_category": r.error_category,
+                            "error_details": r.error_details,
+                            "retry_count": r.retry_count,
+                            "successful_attempt": r.successful_attempt,
                             "certificate": r.certificate,
                         }
                         for r in data["scan_results"]
@@ -562,6 +629,11 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                         "domain_sources": r.domain_sources,
                         "tls_version": r.tls_version,
                         "error": r.error,
+                        "error_code": r.error_code,
+                        "error_category": r.error_category,
+                        "error_details": r.error_details,
+                        "retry_count": r.retry_count,
+                        "successful_attempt": r.successful_attempt,
                         "certificate": r.certificate,
                     }
                     for r in ip_results
@@ -585,6 +657,13 @@ async def run_mixed_scan(args: argparse.Namespace, console: "ConsoleOutput") -> 
                 "unique_domains": stats.domains_found,
                 "elapsed_seconds": stats.elapsed_time,
                 "scan_rate": stats.scan_rate,
+                "error_breakdown": {
+                    "by_category": dict(stats.category_counts),
+                    "by_code": dict(stats.error_counts),
+                    "retry_success_distribution": {
+                        str(k): v for k, v in stats.retry_success_counts.items()
+                    },
+                },
             },
             input_hostnames=input_hostnames,
         )
@@ -708,6 +787,10 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
 
             if result.status == "success":
                 stats.successful += 1
+                # Track retry success if it took multiple attempts
+                if result.successful_attempt and result.successful_attempt > 1:
+                    stats.record_retry_success(result.successful_attempt)
+
                 if result.domains:
                     for domain in result.domains:
                         unique_domains.add(domain)
@@ -724,7 +807,11 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
                     )
             else:
                 stats.failed += 1
-                logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
+                stats.record_error(result.error_code, result.error_category)
+                logger.debug(
+                    f"Failed to scan {result.ip}:{result.port}: "
+                    f"[{result.error_code}] {result.error}"
+                )
 
         # Scan all targets with rate limiting and progress callback
         # Type annotation already correct for scan_targets
@@ -776,6 +863,11 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
                     "domain_sources": r.domain_sources,
                     "tls_version": r.tls_version,
                     "error": r.error,
+                    "error_code": r.error_code,
+                    "error_category": r.error_category,
+                    "error_details": r.error_details,
+                    "retry_count": r.retry_count,
+                    "successful_attempt": r.successful_attempt,
                     "certificate": r.certificate,
                 }
                 for r in results
@@ -795,6 +887,13 @@ async def run_ip_scan(args: argparse.Namespace, console: "ConsoleOutput") -> int
                 "unique_domains": stats.domains_found,
                 "elapsed_seconds": stats.elapsed_time,
                 "scan_rate": stats.scan_rate,
+                "error_breakdown": {
+                    "by_category": dict(stats.category_counts),
+                    "by_code": dict(stats.error_counts),
+                    "retry_success_distribution": {
+                        str(k): v for k, v in stats.retry_success_counts.items()
+                    },
+                },
             },
             input_hostnames=input_hostnames,
         )
@@ -882,7 +981,7 @@ async def run_single_url_scan(args: argparse.Namespace, console: "ConsoleOutput"
 
     # Resolve hostname
     console.info(f"Resolving hostname: {hostname}")
-    dns_map = await dns_resolver.resolve_multiple([hostname], concurrency=1)
+    dns_map = await dns_resolver.resolve_multiple([hostname], concurrency=1, ipv6=args.ipv6)
     dns_result = dns_map.get(hostname)
 
     if not dns_result or dns_result.status != "success" or not dns_result.ips:
@@ -941,6 +1040,10 @@ async def run_single_url_scan(args: argparse.Namespace, console: "ConsoleOutput"
 
             if result.status == "success":
                 stats.successful += 1
+                # Track retry success if it took multiple attempts
+                if result.successful_attempt and result.successful_attempt > 1:
+                    stats.record_retry_success(result.successful_attempt)
+
                 if result.domains:
                     for domain in result.domains:
                         unique_domains.add(domain)
@@ -957,7 +1060,11 @@ async def run_single_url_scan(args: argparse.Namespace, console: "ConsoleOutput"
                     )
             else:
                 stats.failed += 1
-                logger.debug(f"Failed to scan {result.ip}:{result.port}: {result.error}")
+                stats.record_error(result.error_code, result.error_category)
+                logger.debug(
+                    f"Failed to scan {result.ip}:{result.port}: "
+                    f"[{result.error_code}] {result.error}"
+                )
 
         # Perform scan
         results = await scanner.scan_multiple(
@@ -1007,6 +1114,11 @@ async def run_single_url_scan(args: argparse.Namespace, console: "ConsoleOutput"
                     "domain_sources": r.domain_sources,
                     "tls_version": r.tls_version,
                     "error": r.error,
+                    "error_code": r.error_code,
+                    "error_category": r.error_category,
+                    "error_details": r.error_details,
+                    "retry_count": r.retry_count,
+                    "successful_attempt": r.successful_attempt,
                     "certificate": r.certificate,
                 }
                 for r in scan_results
@@ -1034,6 +1146,13 @@ async def run_single_url_scan(args: argparse.Namespace, console: "ConsoleOutput"
                 "unique_domains": stats.domains_found,
                 "elapsed_seconds": stats.elapsed_time,
                 "scan_rate": stats.scan_rate,
+                "error_breakdown": {
+                    "by_category": dict(stats.category_counts),
+                    "by_code": dict(stats.error_counts),
+                    "retry_success_distribution": {
+                        str(k): v for k, v in stats.retry_success_counts.items()
+                    },
+                },
             },
             input_hostnames=input_hostnames,
         )
@@ -1116,7 +1235,7 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
     # Resolve all hostnames
     console.info("Resolving hostnames...")
     hostnames = list(set([hostname for _, hostname, _ in url_data]))
-    dns_results = await dns_resolver.resolve_multiple(hostnames, concurrency=args.threads)
+    dns_results = await dns_resolver.resolve_multiple(hostnames, concurrency=args.threads, ipv6=args.ipv6)
 
     # Count DNS successes
     dns_success = sum(1 for r in dns_results.values() if r.status == "success")
@@ -1293,6 +1412,11 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
                         "domain_sources": r.domain_sources,
                         "tls_version": r.tls_version,
                         "error": r.error,
+                        "error_code": r.error_code,
+                        "error_category": r.error_category,
+                        "error_details": r.error_details,
+                        "retry_count": r.retry_count,
+                        "successful_attempt": r.successful_attempt,
                         "certificate": r.certificate,
                     }
                     for r in (data["scan_results"] if isinstance(data["scan_results"], list) else [])
@@ -1321,6 +1445,13 @@ async def run_url_scan(args: argparse.Namespace, console: "ConsoleOutput") -> in
                 "unique_domains": stats.domains_found,
                 "elapsed_seconds": stats.elapsed_time,
                 "scan_rate": stats.scan_rate,
+                "error_breakdown": {
+                    "by_category": dict(stats.category_counts),
+                    "by_code": dict(stats.error_counts),
+                    "retry_success_distribution": {
+                        str(k): v for k, v in stats.retry_success_counts.items()
+                    },
+                },
             },
         )
 
