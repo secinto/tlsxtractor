@@ -63,7 +63,7 @@ class ErrorCode(str, Enum):
     TLS_EOF = "TLS_EOF"
     TLS_SYSCALL_ERROR = "TLS_SYSCALL_ERROR"
     TLS_ALERT_RECEIVED = "TLS_ALERT_RECEIVED"
-    TLS_NOT_TLS = "TLS_NOT_TLS"  # Server not running TLS (plain HTTP, wrong port, etc.)
+    PLAIN_HTTP_NO_TLS = "PLAIN_HTTP_NO_TLS"  # Server not running TLS (plain HTTP, wrong port, etc.)
     TLS_WRONG_VERSION = "TLS_WRONG_VERSION"  # SSL WRONG_VERSION_NUMBER error
 
     # Certificate errors
@@ -152,7 +152,7 @@ def classify_ssl_error(e: ssl.SSLError) -> Tuple[ErrorCode, ErrorCategory, Dict[
         # WRONG_VERSION_NUMBER typically means server isn't running TLS
         # (e.g., plain HTTP server, or completely different protocol)
         if ssl_reason == "WRONG_VERSION_NUMBER":
-            return ErrorCode.TLS_NOT_TLS, ErrorCategory.TLS, details
+            return ErrorCode.PLAIN_HTTP_NO_TLS, ErrorCategory.TLS, details
         elif ssl_reason == "NO_PROTOCOLS_AVAILABLE":
             return ErrorCode.TLS_VERSION_MISMATCH, ErrorCategory.TLS, details
         elif ssl_reason == "SSLV3_ALERT_HANDSHAKE_FAILURE":
