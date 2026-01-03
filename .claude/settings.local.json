@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(source venv/bin/activate)",
+      "Bash(pip install:*)",
+      "Bash(tlsxtractor --help:*)",
+      "Bash(tlsxtractor:*)",
+      "Bash(python3:*)",
+      "Bash(cat:*)",
+      "Bash(wc:*)",
+      "Bash(time python3:*)",
+      "Bash(curl:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(./scan.sh:*)",
+      "mcp__morph-mcp__edit_file"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
